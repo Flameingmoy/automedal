@@ -1,19 +1,48 @@
 [project]
-name = "autoresearch"
+name = "autoresearch-kaggle"
 version = "0.1.0"
-description = "Autonomous pretraining research swarm"
+description = "Autonomous Kaggle competition research with OpenCode + GLM-5.1"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 dependencies = [
-    "kernels>=0.11.7",
-    "matplotlib>=3.10.8",
-    "numpy>=2.2.6",
-    "pandas>=2.3.3",
-    "pyarrow>=21.0.0",
-    "requests>=2.32.0",
-    "rustbpe>=0.1.0",
-    "tiktoken>=0.11.0",
-    "torch==2.9.1",
+    # Core ML
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scikit-learn>=1.5",
+    "scipy>=1.12",
+
+    # Gradient boosting
+    "xgboost>=2.1",
+    "lightgbm>=4.5",
+    "catboost>=1.2",
+
+    # Hyperparameter optimization
+    "optuna>=4.0",
+
+    # Deep learning (GPU)
+    "torch>=2.4",
+    "pytorch-tabnet>=4.1",
+
+    # Feature engineering & encoding
+    "category_encoders>=2.6",
+
+    # AutoML (lightweight)
+    "flaml>=2.3",
+
+    # Analysis & visualization
+    "matplotlib>=3.9",
+    "seaborn>=0.13",
+
+    # Utilities
+    "pyarrow>=17.0",
+    "joblib>=1.4",
+    "imbalanced-learn>=0.12",
+]
+
+[project.optional-dependencies]
+# Heavy AutoML - agent can install on demand
+automl = [
+    "autogluon.tabular>=1.2",
 ]
 
 [tool.uv.sources]
