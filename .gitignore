@@ -8,16 +8,26 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Data — too large for git
+data/*.csv
+data/*.npy
+data/*.json
+playground-series-s6e4/
+
+# Submissions
+submissions/
+
+# Experiment logs & results
+results.tsv
+agent_loop.log
+
+# Agent working files
 worktrees/
 results/
 queue/
-
-# Agent prompt files (generated per-session by launchers)
-CLAUDE.md
-AGENTS.md
-
-# Experimental code/artifacts
 dev/
+catboost_info/
 
-# Results file
-results.tsv
+# Agent prompt files (generated per-session)
+CLAUDE.md
