@@ -27,7 +27,8 @@ import datetime
 import numpy as np
 import xgboost as xgb
 import lightgbm as lgb
-from catboost import CatBoostClassifier
+from catboost import CatBoostClassifier, CatBoostError
+from lightgbm.basic import LightGBMError
 import optuna
 from sklearn.metrics import accuracy_score, log_loss
 from sklearn.model_selection import StratifiedKFold
@@ -81,12 +82,9 @@ def get_best_score():
         return float("inf")
 
 
-def generate_submission(model, X_test, class_names, tag):
-    """Generate a Kaggle submission CSV from the trained model."""
+def generate_submission(preds, X_test, class_names, tag):
+    """Generate a Kaggle submission CSV from predictions (int class indices)."""
     test_ids = np.load(os.path.join(DATA_DIR, "test_ids.npy"))
-    preds = model.predict(X_test)
-
-    # Map numeric predictions back to class names
     pred_labels = [class_names[int(p)] for p in preds]
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -100,9 +98,81 @@ def generate_submission(model, X_test, class_names, tag):
     return filename
 
 
+# ─── GPU-OPTIMIZED MODEL BUILDERS ───────────────────────────────────────
+
+def build_xgb(trial, num_classes):
+    """XGBoost with GPU hist — pushes VRAM via large max_bin and deep trees."""
+    return xgb.XGBClassifier(
+        objective="multi:softprob",
+        num_class=num_classes,
+        eval_metric="mlogloss",
+        tree_method="hist",
+        device="cuda",
+        verbosity=0,
+        max_bin=trial.suggest_int("xgb_max_bin", 256, 1024),
+        learning_rate=trial.suggest_float("xgb_lr", 5e-3, 0.3, log=True),
+        max_depth=trial.suggest_int("xgb_depth", 4, 12),
+        n_estimators=trial.suggest_int("xgb_n_est", 200, 2000),
+        subsample=trial.suggest_float("xgb_subsample", 0.6, 1.0),
+        colsample_bytree=trial.suggest_float("xgb_colsample", 0.4, 1.0),
+        colsample_bylevel=trial.suggest_float("xgb_colsample_level", 0.4, 1.0),
+        min_child_weight=trial.suggest_int("xgb_mcw", 1, 30),
+        gamma=trial.suggest_float("xgb_gamma", 0, 5.0),
+        reg_alpha=trial.suggest_float("xgb_alpha", 1e-8, 10.0, log=True),
+        reg_lambda=trial.suggest_float("xgb_lambda", 1e-8, 10.0, log=True),
+        grow_policy=trial.suggest_categorical("xgb_grow", ["depthwise", "lossguide"]),
+        early_stopping_rounds=50,
+    )
+
+
+def build_lgb(trial, num_classes):
+    """LightGBM with GPU — fast histogram-based, GPU-accelerated.
+    Note: LightGBM GPU requires max_bin <= 255."""
+    return lgb.LGBMClassifier(
+        objective="multiclass",
+        num_class=num_classes,
+        device="gpu",
+        gpu_device_id=GPU_ID,
+        max_bin=255,  # LightGBM GPU hard limit
+        learning_rate=trial.suggest_float("lgb_lr", 5e-3, 0.3, log=True),
+        n_estimators=trial.suggest_int("lgb_n_est", 200, 2000),
+        max_depth=trial.suggest_int("lgb_depth", -1, 15),
+        num_leaves=trial.suggest_int("lgb_leaves", 31, 512),
+        subsample=trial.suggest_float("lgb_subsample", 0.6, 1.0),
+        subsample_freq=trial.suggest_int("lgb_subsample_freq", 1, 10),
+        colsample_bytree=trial.suggest_float("lgb_colsample", 0.4, 1.0),
+        min_child_samples=trial.suggest_int("lgb_min_child", 5, 100),
+        reg_alpha=trial.suggest_float("lgb_alpha", 1e-8, 10.0, log=True),
+        reg_lambda=trial.suggest_float("lgb_lambda", 1e-8, 10.0, log=True),
+        min_split_gain=trial.suggest_float("lgb_min_gain", 0, 1.0),
+        verbose=-1,
+    )
+
+
+def build_cat(trial, num_classes):
+    """CatBoost — fully GPU-native, uses VRAM heavily with large border_count."""
+    return CatBoostClassifier(
+        loss_function="MultiClass",
+        classes_count=num_classes,
+        task_type="GPU",
+        devices=str(GPU_ID),
+        border_count=trial.suggest_int("cat_border", 128, 512),
+        learning_rate=trial.suggest_float("cat_lr", 5e-3, 0.3, log=True),
+        iterations=trial.suggest_int("cat_iters", 200, 2000),
+        depth=trial.suggest_int("cat_depth", 4, 10),
+        l2_leaf_reg=trial.suggest_float("cat_l2", 1e-3, 10.0, log=True),
+        random_strength=trial.suggest_float("cat_rand_str", 0, 2.0),
+        bagging_temperature=trial.suggest_float("cat_bag_temp", 0, 5.0),
+        verbose=0,
+        allow_writing_files=False,
+    )
+
+
+# ─── MAIN ───────────────────────────────────────────────────────────────
+
 def main():
     print("=" * 60)
-    print("AutoResearch Kaggle — Training")
+    print("AutoResearch Kaggle — Training (GPU-Optimized)")
     print(f"Hypothesis: {HYPOTHESIS}")
     print("=" * 60)
 
@@ -113,7 +183,6 @@ def main():
     print(f"  Train: {X_train.shape}, Val: {X_val.shape}, Test: {X_test.shape}")
     print(f"  Classes: {num_classes}")
 
-    # Load metadata
     with open(os.path.join(DATA_DIR, "class_names.json")) as f:
         class_names = json.load(f)
     with open(os.path.join(DATA_DIR, "feature_names.json")) as f:
@@ -124,94 +193,176 @@ def main():
     previous_best = get_best_score()
     print(f"  Previous best val_loss: {previous_best:.4f}")
 
-    # ─── OPTUNA OBJECTIVE ────────────────────────────────────────────────
-    # Agent: modify this function freely. Swap XGBoost for LightGBM, CatBoost,
-    # PyTorch TabNet, a sklearn ensemble, or anything else.
-    def objective(trial):
-        elapsed = time.time() - start_time
-        if elapsed > budget_seconds - 90:  # leave 90s for final train + submission
-            raise optuna.exceptions.TrialPruned("Time budget nearing end.")
+    # Pre-cache XGBoost DMatrix on GPU — avoids re-uploading every trial
+    print("  Pre-caching DMatrix on GPU...")
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    dval = xgb.DMatrix(X_val, label=y_val)
 
-        params = {
-            "objective": "multi:softprob",
-            "num_class": num_classes,
-            "eval_metric": "mlogloss",
-            "tree_method": "hist",
-            "device": "cuda",
-            "verbosity": 0,
-            # Core hyperparameters
-            "learning_rate": trial.suggest_float("learning_rate", 1e-3, 0.3, log=True),
-            "max_depth": trial.suggest_int("max_depth", 3, 12),
-            "n_estimators": trial.suggest_int("n_estimators", 100, 1000),
-            "subsample": trial.suggest_float("subsample", 0.5, 1.0),
-            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.3, 1.0),
-            "min_child_weight": trial.suggest_int("min_child_weight", 1, 20),
-            # Regularization
-            "gamma": trial.suggest_float("gamma", 0, 5.0),
-            "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
-            "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
-        }
-
-        model = xgb.XGBClassifier(**params, early_stopping_rounds=50)
-        model.fit(
-            X_train, y_train,
-            eval_set=[(X_val, y_val)],
-            verbose=False,
-        )
-
-        preds_proba = model.predict_proba(X_val)
-        return log_loss(y_val, preds_proba)
-
-    # ─── RUN OPTUNA SEARCH ───────────────────────────────────────────────
-    print("\nStarting Optuna study...")
+    # ─── PHASE 1: Tune each model independently ─────────────────────────
+    # Allocate ~3 min per model for Optuna, ~1 min for final ensemble
+    model_budget = (budget_seconds - 120) // 3  # seconds per model
     optuna.logging.set_verbosity(optuna.logging.WARNING)
-    study = optuna.create_study(direction="minimize")
-    study.optimize(
-        objective,
-        n_trials=200,
-        timeout=budget_seconds - 90,
-        catch=(optuna.exceptions.TrialPruned,),
+    best_models = {}
+
+    # --- XGBoost ---
+    print(f"\n[1/3] XGBoost Optuna ({model_budget}s budget)...")
+    xgb_start = time.time()
+
+    def xgb_objective(trial):
+        if time.time() - xgb_start > model_budget:
+            raise optuna.exceptions.TrialPruned()
+        model = build_xgb(trial, num_classes)
+        model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+        return log_loss(y_val, model.predict_proba(X_val))
+
+    xgb_study = optuna.create_study(direction="minimize")
+    xgb_study.optimize(xgb_objective, n_trials=100, timeout=model_budget,
+                       catch=(optuna.exceptions.TrialPruned, Exception))
+    xgb_done = len([t for t in xgb_study.trials if t.state == optuna.trial.TrialState.COMPLETE])
+    print(f"  XGBoost: {xgb_done} trials, best={xgb_study.best_value:.4f}")
+
+    # --- LightGBM ---
+    print(f"\n[2/3] LightGBM Optuna ({model_budget}s budget)...")
+    lgb_start = time.time()
+
+    def lgb_objective(trial):
+        if time.time() - lgb_start > model_budget:
+            raise optuna.exceptions.TrialPruned()
+        model = build_lgb(trial, num_classes)
+        model.fit(X_train, y_train, eval_set=[(X_val, y_val)],
+                  callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)])
+        return log_loss(y_val, model.predict_proba(X_val))
+
+    lgb_study = optuna.create_study(direction="minimize")
+    lgb_study.optimize(lgb_objective, n_trials=100, timeout=model_budget,
+                       catch=(optuna.exceptions.TrialPruned, LightGBMError, Exception))
+    lgb_done = len([t for t in lgb_study.trials if t.state == optuna.trial.TrialState.COMPLETE])
+    print(f"  LightGBM: {lgb_done} trials, best={lgb_study.best_value:.4f}")
+
+    # --- CatBoost ---
+    print(f"\n[3/3] CatBoost Optuna ({model_budget}s budget)...")
+    cat_start = time.time()
+
+    def cat_objective(trial):
+        if time.time() - cat_start > model_budget:
+            raise optuna.exceptions.TrialPruned()
+        model = build_cat(trial, num_classes)
+        model.fit(X_train, y_train, eval_set=(X_val, y_val), early_stopping_rounds=50)
+        return log_loss(y_val, model.predict_proba(X_val))
+
+    cat_study = optuna.create_study(direction="minimize")
+    cat_study.optimize(cat_objective, n_trials=60, timeout=model_budget,
+                       catch=(optuna.exceptions.TrialPruned, CatBoostError, Exception))
+    cat_done = len([t for t in cat_study.trials if t.state == optuna.trial.TrialState.COMPLETE])
+    print(f"  CatBoost: {cat_done} trials, best={cat_study.best_value:.4f}")
+
+    # ─── PHASE 2: Train final models with best params ───────────────────
+    print("\n--- Training final models with best params ---")
+    total_trials = xgb_done + lgb_done + cat_done
+
+    # XGBoost final
+    xgb_best = xgb_study.best_params
+    xgb_final = xgb.XGBClassifier(
+        objective="multi:softprob", num_class=num_classes, eval_metric="mlogloss",
+        tree_method="hist", device="cuda", verbosity=0, early_stopping_rounds=50,
+        max_bin=xgb_best.pop("xgb_max_bin", 512),
+        learning_rate=xgb_best.pop("xgb_lr"), max_depth=xgb_best.pop("xgb_depth"),
+        n_estimators=xgb_best.pop("xgb_n_est"), subsample=xgb_best.pop("xgb_subsample"),
+        colsample_bytree=xgb_best.pop("xgb_colsample"),
+        colsample_bylevel=xgb_best.pop("xgb_colsample_level"),
+        min_child_weight=xgb_best.pop("xgb_mcw"), gamma=xgb_best.pop("xgb_gamma"),
+        reg_alpha=xgb_best.pop("xgb_alpha"), reg_lambda=xgb_best.pop("xgb_lambda"),
+        grow_policy=xgb_best.pop("xgb_grow"),
     )
+    xgb_final.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+    xgb_proba_val = xgb_final.predict_proba(X_val)
+    xgb_proba_test = xgb_final.predict_proba(X_test)
+    print(f"  XGBoost final: {log_loss(y_val, xgb_proba_val):.4f}")
 
-    completed = len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE])
-    print(f"\n  Completed {completed} trials (best loss: {study.best_value:.4f})")
-
-    # ─── TRAIN FINAL MODEL ───────────────────────────────────────────────
-    print("\nTraining final model with best params...")
-    best_params = study.best_params
-    best_params.update({
-        "objective": "multi:softprob",
-        "num_class": num_classes,
-        "eval_metric": "mlogloss",
-        "tree_method": "hist",
-        "device": "cuda",
-        "verbosity": 0,
-    })
-
-    final_model = xgb.XGBClassifier(**best_params, early_stopping_rounds=50)
-    final_model.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-        verbose=False,
+    # LightGBM final
+    lgb_best = lgb_study.best_params
+    lgb_final = lgb.LGBMClassifier(
+        objective="multiclass", num_class=num_classes, device="gpu",
+        gpu_device_id=GPU_ID, verbose=-1, max_bin=255,
+        learning_rate=lgb_best.pop("lgb_lr"),
+        n_estimators=lgb_best.pop("lgb_n_est"), max_depth=lgb_best.pop("lgb_depth"),
+        num_leaves=lgb_best.pop("lgb_leaves"), subsample=lgb_best.pop("lgb_subsample"),
+        subsample_freq=lgb_best.pop("lgb_subsample_freq"),
+        colsample_bytree=lgb_best.pop("lgb_colsample"),
+        min_child_samples=lgb_best.pop("lgb_min_child"),
+        reg_alpha=lgb_best.pop("lgb_alpha"), reg_lambda=lgb_best.pop("lgb_lambda"),
+        min_split_gain=lgb_best.pop("lgb_min_gain"),
     )
+    lgb_final.fit(X_train, y_train, eval_set=[(X_val, y_val)],
+                  callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)])
+    lgb_proba_val = lgb_final.predict_proba(X_val)
+    lgb_proba_test = lgb_final.predict_proba(X_test)
+    print(f"  LightGBM final: {log_loss(y_val, lgb_proba_val):.4f}")
 
-    # ─── EVALUATE ────────────────────────────────────────────────────────
-    preds_proba = final_model.predict_proba(X_val)
-    preds = final_model.predict(X_val)
-    val_loss = log_loss(y_val, preds_proba)
-    val_accuracy = accuracy_score(y_val, preds)
+    # CatBoost final
+    cat_best = cat_study.best_params
+    cat_final = CatBoostClassifier(
+        loss_function="MultiClass", classes_count=num_classes,
+        task_type="GPU", devices=str(GPU_ID), verbose=0, allow_writing_files=False,
+        border_count=cat_best.pop("cat_border"),
+        learning_rate=cat_best.pop("cat_lr"), iterations=cat_best.pop("cat_iters"),
+        depth=cat_best.pop("cat_depth"), l2_leaf_reg=cat_best.pop("cat_l2"),
+        random_strength=cat_best.pop("cat_rand_str"),
+        bagging_temperature=cat_best.pop("cat_bag_temp"),
+    )
+    cat_final.fit(X_train, y_train, eval_set=(X_val, y_val), early_stopping_rounds=50)
+    cat_proba_val = cat_final.predict_proba(X_val)
+    cat_proba_test = cat_final.predict_proba(X_test)
+    print(f"  CatBoost final: {log_loss(y_val, cat_proba_val):.4f}")
+
+    # ─── PHASE 3: Weighted ensemble via grid search ──────────────────────
+    print("\n--- Optimizing ensemble weights ---")
+    best_ens_loss = float("inf")
+    best_weights = (1/3, 1/3, 1/3)
+
+    for w_xgb in np.arange(0.1, 0.8, 0.05):
+        for w_lgb in np.arange(0.1, 0.8 - w_xgb, 0.05):
+            w_cat = 1.0 - w_xgb - w_lgb
+            if w_cat < 0.05:
+                continue
+            ens_proba = w_xgb * xgb_proba_val + w_lgb * lgb_proba_val + w_cat * cat_proba_val
+            ens_loss = log_loss(y_val, ens_proba)
+            if ens_loss < best_ens_loss:
+                best_ens_loss = ens_loss
+                best_weights = (w_xgb, w_lgb, w_cat)
+
+    w_xgb, w_lgb, w_cat = best_weights
+    print(f"  Best weights: XGB={w_xgb:.2f}, LGB={w_lgb:.2f}, CAT={w_cat:.2f}")
+
+    # Final ensemble predictions
+    ens_proba_val = w_xgb * xgb_proba_val + w_lgb * lgb_proba_val + w_cat * cat_proba_val
+    ens_proba_test = w_xgb * xgb_proba_test + w_lgb * lgb_proba_test + w_cat * cat_proba_test
+    ens_preds_val = np.argmax(ens_proba_val, axis=1)
+    ens_preds_test = np.argmax(ens_proba_test, axis=1)
+
+    val_loss = log_loss(y_val, ens_proba_val)
+    val_accuracy = accuracy_score(y_val, ens_preds_val)
     elapsed = time.time() - start_time
 
-    print(f"\n  Validation Loss:     {val_loss:.4f}")
-    print(f"  Validation Accuracy: {val_accuracy:.4f}")
-    print(f"  Time elapsed:        {elapsed:.0f}s")
+    print(f"\n  Ensemble Val Loss:     {val_loss:.4f}")
+    print(f"  Ensemble Val Accuracy: {val_accuracy:.4f}")
+    print(f"  Time elapsed:          {elapsed:.0f}s")
+
+    # Compare individual vs ensemble
+    individual_losses = {
+        "xgboost": log_loss(y_val, xgb_proba_val),
+        "lightgbm": log_loss(y_val, lgb_proba_val),
+        "catboost": log_loss(y_val, cat_proba_val),
+    }
+    best_individual = min(individual_losses, key=individual_losses.get)
+    print(f"  Best individual: {best_individual} ({individual_losses[best_individual]:.4f})")
 
     # ─── GENERATE SUBMISSION ─────────────────────────────────────────────
     submission_file = ""
     improved = val_loss < previous_best
     if improved:
         print(f"\n  IMPROVED! {previous_best:.4f} -> {val_loss:.4f}")
-        submission_file = generate_submission(final_model, X_test, class_names, "xgboost")
+        submission_file = generate_submission(ens_preds_test, X_test, class_names, "ensemble")
     else:
         print(f"\n  No improvement ({val_loss:.4f} >= {previous_best:.4f})")
 
@@ -222,7 +373,8 @@ def main():
         if write_header:
             f.write("timestamp\tmethod\ttrials\tval_loss\tval_accuracy\tsubmission\tnotes\n")
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        f.write(f"{timestamp}\txgboost\t{completed}\t{val_loss:.6f}\t{val_accuracy:.6f}\t{submission_file}\t{HYPOTHESIS}\n")
+        weights_str = f"w=({w_xgb:.2f},{w_lgb:.2f},{w_cat:.2f})"
+        f.write(f"{timestamp}\tensemble\t{total_trials}\t{val_loss:.6f}\t{val_accuracy:.6f}\t{submission_file}\t{HYPOTHESIS} {weights_str}\n")
 
     # ─── AUTORESEARCH OUTPUT (DO NOT CHANGE THIS LINE) ───────────────────
     print(f"final_val_loss={val_loss:.4f}")
