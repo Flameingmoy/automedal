@@ -1,4 +1,4 @@
-# AutoResearch for Kaggle
+# AutoMedal
 
 Autonomous ML research for Kaggle competitions, powered by [OpenCode](https://opencode.ai) + GLM-5.1. Adapted from [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) — same philosophy (edit, train, check, keep/revert), but targeting tabular ML competitions instead of LLM pretraining.
 
