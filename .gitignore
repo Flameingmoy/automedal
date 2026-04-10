@@ -28,6 +28,3 @@ results/
 queue/
 dev/
 catboost_info/
-
-# Agent prompt files (generated per-session)
-CLAUDE.md
