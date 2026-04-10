@@ -51,27 +51,56 @@ def _check_kaggle_auth():
     return True
 
 
-def _competition_to_dict(comp):
-    """Convert a Kaggle API competition object to a serializable dict."""
-    fields = [
-        "ref", "title", "description", "url", "category",
-        "reward", "deadline", "teamCount", "isKernelsSubmissionsOnly",
-        "evaluationMetric", "maxDailySubmissions", "maxTeamSize",
-        "enabledDate",
-    ]
-    result = {}
-    for field in fields:
-        val = getattr(comp, field, None)
-        if isinstance(val, datetime.datetime):
-            val = val.isoformat()
-        result[field] = val
+def _extract_slug(ref_or_url):
+    """Extract competition slug from a ref that may be a full URL.
+    e.g. 'https://www.kaggle.com/competitions/my-comp' -> 'my-comp'
+    """
+    ref = str(ref_or_url or "")
+    if "/competitions/" in ref:
+        return ref.split("/competitions/")[-1].strip("/")
+    return ref
 
-    # Handle tags
+
+def _competition_to_dict(comp):
+    """Convert a Kaggle SDK v2 competition object to a serializable dict.
+
+    Maps snake_case SDK attributes to the camelCase keys expected by scoring.py.
+    """
+    # SDK v2 uses snake_case attributes; map to our canonical dict keys
+    raw_ref = getattr(comp, "ref", "") or ""
+    slug = _extract_slug(raw_ref)
+
+    deadline = getattr(comp, "deadline", None)
+    enabled_date = getattr(comp, "enabled_date", None) or getattr(comp, "date_created", None)
+    if isinstance(deadline, datetime.datetime):
+        deadline = deadline.isoformat()
+    if isinstance(enabled_date, datetime.datetime):
+        enabled_date = enabled_date.isoformat()
+
+    result = {
+        "ref": slug,
+        "title": getattr(comp, "title", "") or "",
+        "description": getattr(comp, "description", "") or "",
+        "url": getattr(comp, "url", "") or f"https://www.kaggle.com/competitions/{slug}",
+        "category": getattr(comp, "category", "") or "",
+        "reward": getattr(comp, "reward", None),
+        "deadline": deadline,
+        "teamCount": getattr(comp, "team_count", 0) or 0,
+        "isKernelsSubmissionsOnly": getattr(comp, "is_kernels_submissions_only", False),
+        "evaluationMetric": getattr(comp, "evaluation_metric", "") or "",
+        "maxDailySubmissions": getattr(comp, "max_daily_submissions", None),
+        "maxTeamSize": getattr(comp, "max_team_size", None),
+        "enabledDate": enabled_date,
+    }
+
+    # Handle tags — SDK v2 returns list of dicts or objects
     tags = getattr(comp, "tags", []) or []
     result["tags"] = []
     for tag in tags:
         if isinstance(tag, str):
             result["tags"].append(tag)
+        elif isinstance(tag, dict):
+            result["tags"].append(tag.get("name", "") or tag.get("ref", ""))
         elif hasattr(tag, "name"):
             result["tags"].append(tag.name)
         elif hasattr(tag, "ref"):
@@ -81,10 +110,13 @@ def _competition_to_dict(comp):
 
 
 def _file_info_to_dict(f):
-    """Convert a Kaggle API file object to a serializable dict."""
+    """Convert a Kaggle SDK v2 file object to a serializable dict."""
+    name = getattr(f, "name", None) or str(f)
+    # SDK v2 uses snake_case: total_bytes
+    size = getattr(f, "total_bytes", None) or getattr(f, "totalBytes", 0) or 0
     return {
-        "name": getattr(f, "name", str(f)),
-        "totalBytes": getattr(f, "totalBytes", 0) or 0,
+        "name": name,
+        "totalBytes": size,
     }
 
 
@@ -104,7 +136,14 @@ def discover_competitions():
     all_competitions = []
     page = 1
     while True:
-        batch = api.competitions_list(page=page)
+        response = api.competitions_list(page=page)
+        # SDK v2 wraps results in a response object
+        if hasattr(response, "competitions"):
+            batch = response.competitions or []
+        elif isinstance(response, list):
+            batch = response
+        else:
+            batch = []
         if not batch:
             break
         all_competitions.extend(batch)
@@ -146,7 +185,14 @@ def discover_competitions():
         for candidate in top_n:
             slug = candidate["competition"]["ref"]
             try:
-                files = api.competition_list_files(slug)
+                files_response = api.competition_list_files(slug)
+                # SDK v2 wraps results in a response object
+                if hasattr(files_response, "files"):
+                    files = files_response.files or []
+                elif isinstance(files_response, list):
+                    files = files_response
+                else:
+                    files = []
                 file_dicts = [_file_info_to_dict(f) for f in files]
                 candidate["competition"]["files"] = file_dicts
                 s2_score, s2_reasons = score_stage2(file_dicts)

@@ -1,6 +1,6 @@
 # AutoResearch Kaggle — Agent Instructions
 
-You are an autonomous ML researcher competing in Kaggle's Playground Series S6E4 (Irrigation Prediction). Your goal is to **minimize validation log loss** and produce high-scoring Kaggle submissions.
+You are an autonomous ML researcher competing in Kaggle's playground-series-s6e4 (Irrigation Prediction). Your goal is to **minimize validation log_loss** and produce high-scoring Kaggle submissions.
 
 ## Project Structure
 
@@ -80,7 +80,7 @@ If you need a library not listed, `pip install` it and handle `ImportError` grac
 
 ## Competition Details
 
-- **Task:** Multi-class classification (Low / Medium / High irrigation need)
-- **Evaluation:** Accuracy on Kaggle, but optimize Log Loss as proxy (it's smoother for HPO)
-- **Dataset:** 630K train rows, 270K test rows, 11 numeric + 8 categorical features
+- **Task:** Multi-class classification (High / Low / Medium)
+- **Evaluation:** Accuracy on Kaggle, but optimize Log_loss as proxy (it's smoother for HPO)
+- **Dataset:** 630000K train rows, 270000K test rows, 11 numeric + 8 categorical features
 - **Target distribution:** Check `results.tsv` notes or run `prepare.py` output
