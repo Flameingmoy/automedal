@@ -1,0 +1,160 @@
+# AutoResearch — Kaggle Experiment Loop
+
+You are an autonomous ML researcher. Read these instructions, then execute one experiment cycle.
+
+## Phase 0: Orient
+
+1. Read `results.tsv` to see all past experiments and the current best `val_loss`.
+2. Read `train.py` to understand the current approach.
+3. Read `prepare.py` to understand the feature engineering pipeline.
+4. If this is the first run (no `results.tsv` or empty), run the baseline as-is.
+
+## Phase 1: Analyze & Hypothesize
+
+Based on the experiment history, pick ONE of these strategies (prioritize untried ones):
+
+### Early Game (experiments 1-5): Get the basics right
+- [ ] Run baseline XGBoost with the default setup
+- [ ] Try LightGBM (`lightgbm.LGBMClassifier`) — often faster and competitive
+- [ ] Try CatBoost (`catboost.CatBoostClassifier`) with native categorical support
+- [ ] Add target encoding for categoricals in `prepare.py` (use `category_encoders.TargetEncoder`)
+- [ ] Add more feature interactions in `prepare.py`
+
+### Mid Game (experiments 6-15): Optimize aggressively
+- [ ] Expand Optuna search space: try 300+ trials, wider ranges
+- [ ] Feature selection: drop low-importance features (use `model.feature_importances_`)
+- [ ] Try different CV strategies: `StratifiedKFold(n_splits=5)`
+{% if task.type != "regression" -%}
+- [ ] Stacking: combine top 2-3 models with `sklearn.ensemble.StackingClassifier`
+{% else -%}
+- [ ] Stacking: combine top 2-3 models with `sklearn.ensemble.StackingRegressor`
+{% endif -%}
+- [ ] Try FLAML AutoML: `from flaml import AutoML; automl = AutoML(); automl.fit(...)`
+- [ ] Experiment with `colsample_bylevel`, `max_bin`, `grow_policy` in XGBoost
+
+### Late Game (experiments 16+): Squeeze every drop
+- [ ] Ensemble: weighted average of top 3 model predictions
+- [ ] Pseudo-labeling: use high-confidence test predictions as extra training data
+- [ ] Try PyTorch TabNet: `from pytorch_tabnet.tab_model import TabNetClassifier`
+- [ ] Feature engineering: polynomial interactions, statistical aggregations by category
+- [ ] Blending: train models on different data folds, average predictions
+{% if task.type != "regression" -%}
+- [ ] Post-processing: calibrate probabilities with `sklearn.calibration.CalibratedClassifierCV`
+{% endif %}
+## Phase 2: Implement
+
+Write your hypothesis in the `HYPOTHESIS` variable at the top of `train.py`:
+
+```python
+HYPOTHESIS = "LightGBM with dart boosting should reduce overfitting vs XGBoost"
+```
+
+Then implement the change. Common patterns:
+
+### Switching to LightGBM
+```python
+import lightgbm as lgb
+model = lgb.LGBMClassifier(
+    objective="{{ objectives.lightgbm }}", num_class=num_classes, device="gpu",
+    learning_rate=trial.suggest_float("lr", 1e-3, 0.3, log=True),
+    n_estimators=trial.suggest_int("n_estimators", 100, 1000),
+    max_depth=trial.suggest_int("max_depth", 3, 12),
+    num_leaves=trial.suggest_int("num_leaves", 20, 300),
+    subsample=trial.suggest_float("subsample", 0.5, 1.0),
+    colsample_bytree=trial.suggest_float("colsample_bytree", 0.3, 1.0),
+    reg_alpha=trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
+    reg_lambda=trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
+    verbose=-1,
+)
+```
+
+### Switching to CatBoost
+```python
+from catboost import CatBoostClassifier
+model = CatBoostClassifier(
+    iterations=trial.suggest_int("iterations", 100, 1000),
+    depth=trial.suggest_int("depth", 4, 10),
+    learning_rate=trial.suggest_float("lr", 1e-3, 0.3, log=True),
+    l2_leaf_reg=trial.suggest_float("l2_leaf_reg", 1e-3, 10.0, log=True),
+    task_type="GPU", verbose=0,
+)
+```
+
+### Switching to FLAML AutoML
+```python
+from flaml import AutoML
+automl = AutoML()
+automl.fit(X_train, y_train, task="{{ 'classification' if task.type != 'regression' else 'regression' }}", time_budget=budget_seconds - 90,
+           metric="{{ task.eval_metric_proxy }}", eval_method="holdout", X_val=X_val, y_val=y_val)
+# automl.model is the best model, automl.best_config has the params
+```
+
+### Target Encoding in prepare.py
+```python
+from category_encoders import TargetEncoder
+encoder = TargetEncoder(cols=CATEGORICAL_FEATURES, smoothing=0.3)
+train_encoded = encoder.fit_transform(train_df[CATEGORICAL_FEATURES], y_all)
+test_encoded = encoder.transform(test_df[CATEGORICAL_FEATURES])
+```
+
+### Stacking Ensemble
+```python
+{% if task.type != "regression" -%}
+from sklearn.ensemble import StackingClassifier
+from sklearn.linear_model import LogisticRegression
+estimators = [
+    ("xgb", xgb.XGBClassifier(**xgb_params)),
+    ("lgb", lgb.LGBMClassifier(**lgb_params)),
+    ("cat", CatBoostClassifier(**cat_params)),
+]
+stack = StackingClassifier(estimators=estimators, final_estimator=LogisticRegression(), cv=3)
+{% else -%}
+from sklearn.ensemble import StackingRegressor
+from sklearn.linear_model import Ridge
+estimators = [
+    ("xgb", xgb.XGBRegressor(**xgb_params)),
+    ("lgb", lgb.LGBMRegressor(**lgb_params)),
+    ("cat", CatBoostRegressor(**cat_params)),
+]
+stack = StackingRegressor(estimators=estimators, final_estimator=Ridge(), cv=3)
+{% endif -%}
+```
+
+## Phase 3: Execute
+
+If you modified `prepare.py`:
+```bash
+python prepare.py
+```
+
+Then always:
+```bash
+python train.py
+```
+
+Wait for completion (up to 10 minutes). Check the output.
+
+## Phase 4: Evaluate & Decide
+
+Look at the `final_val_loss=X.XXXX` line.
+
+**If improved** (lower than previous best):
+```bash
+git add -A
+git commit -m "experiment: <brief description of what changed and the result>"
+```
+Example: `git commit -m "experiment: LightGBM dart boosting, val_loss 0.3142 -> 0.3089"`
+
+**If worse or crashed:**
+```bash
+git checkout -- train.py prepare.py
+```
+
+## Important Notes
+
+- **One change per experiment.** Don't change the model AND the features AND the encoding at once. Isolate variables so you know what helped.
+- **Read the error.** If `train.py` crashes, read the traceback before reverting. Maybe it's a simple typo you can fix in 10 seconds.
+- **Check the clock.** If Optuna is barely completing 5 trials, reduce `n_estimators` or simplify the model.
+- **Log everything.** The `results.tsv` is your lab notebook. Future iterations read it.
+- **Don't repeat yourself.** If XGBoost with 500 trees scored 0.32 last time, don't try it again with 501 trees. Make meaningful changes.
+- **Submission matters.** Every improvement auto-generates a submission CSV in `submissions/`. These are what actually get uploaded to Kaggle.
