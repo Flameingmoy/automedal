@@ -33,6 +33,17 @@ import optuna
 from sklearn.metrics import accuracy_score, log_loss
 from sklearn.model_selection import StratifiedKFold
 from sklearn.linear_model import LogisticRegression
+from config_loader import get_objectives, get_submission
+
+# ─── CONFIG-DRIVEN OBJECTIVES (from configs/competition.yaml) ────────
+_obj = get_objectives()
+_sub = get_submission()
+XGB_OBJECTIVE = _obj["xgboost"]
+XGB_EVAL_METRIC = _obj["xgboost_eval"]
+LGB_OBJECTIVE = _obj["lightgbm"]
+CAT_LOSS_FUNCTION = _obj["catboost"]
+SUB_ID_COL = _sub["id_col"]
+SUB_TARGET_COL = _sub["target_col"]
 
 # ─── HARD CONSTRAINTS ───────────────────────────────────────────────────
 TIME_BUDGET_MINUTES = 10
@@ -94,7 +105,7 @@ def generate_submission(preds, X_test, class_names, tag):
 
     import pandas as pd
 
-    sub_df = pd.DataFrame({"id": test_ids, "Irrigation_Need": pred_labels})
+    sub_df = pd.DataFrame({SUB_ID_COL: test_ids, SUB_TARGET_COL: pred_labels})
     sub_df.to_csv(filepath, index=False)
     print(f"  Submission saved: {filepath}")
     return filename
@@ -106,9 +117,9 @@ def generate_submission(preds, X_test, class_names, tag):
 def build_xgb(trial, num_classes):
     """XGBoost with GPU hist — pushes VRAM via large max_bin and deep trees."""
     return xgb.XGBClassifier(
-        objective="multi:softprob",
+        objective=XGB_OBJECTIVE,
         num_class=num_classes,
-        eval_metric="mlogloss",
+        eval_metric=XGB_EVAL_METRIC,
         tree_method="hist",
         device="cuda",
         verbosity=0,
@@ -132,7 +143,7 @@ def build_lgb(trial, num_classes):
     """LightGBM with GPU — fast histogram-based, GPU-accelerated.
     Note: LightGBM GPU requires max_bin <= 255."""
     return lgb.LGBMClassifier(
-        objective="multiclass",
+        objective=LGB_OBJECTIVE,
         num_class=num_classes,
         device="gpu",
         gpu_device_id=GPU_ID,
@@ -155,7 +166,7 @@ def build_lgb(trial, num_classes):
 def build_cat(trial, num_classes):
     """CatBoost — fully GPU-native, uses VRAM heavily with large border_count."""
     return CatBoostClassifier(
-        loss_function="MultiClass",
+        loss_function=CAT_LOSS_FUNCTION,
         classes_count=num_classes,
         task_type="GPU",
         devices=str(GPU_ID),
@@ -289,9 +300,9 @@ def main():
     # XGBoost final
     xgb_best = xgb_study.best_params
     xgb_final = xgb.XGBClassifier(
-        objective="multi:softprob",
+        objective=XGB_OBJECTIVE,
         num_class=num_classes,
-        eval_metric="mlogloss",
+        eval_metric=XGB_EVAL_METRIC,
         tree_method="hist",
         device="cuda",
         verbosity=0,
@@ -317,7 +328,7 @@ def main():
     # LightGBM final
     lgb_best = lgb_study.best_params
     lgb_final = lgb.LGBMClassifier(
-        objective="multiclass",
+        objective=LGB_OBJECTIVE,
         num_class=num_classes,
         device="gpu",
         gpu_device_id=GPU_ID,
@@ -348,7 +359,7 @@ def main():
     # CatBoost final
     cat_best = cat_study.best_params
     cat_final = CatBoostClassifier(
-        loss_function="MultiClass",
+        loss_function=CAT_LOSS_FUNCTION,
         classes_count=num_classes,
         task_type="GPU",
         devices=str(GPU_ID),

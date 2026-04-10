@@ -16,6 +16,7 @@ import os
 import json
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
 from sklearn.model_selection import train_test_split
+from config_loader import get_task, get_dataset, get_submission
 
 # ─── PATHS ───────────────────────────────────────────────────────────────
 DATA_DIR = "data"
@@ -23,20 +24,13 @@ TRAIN_CSV = os.path.join(DATA_DIR, "train.csv")
 TEST_CSV = os.path.join(DATA_DIR, "test.csv")
 RANDOM_SEED = 42
 
-# ─── COLUMN DEFINITIONS ─────────────────────────────────────────────────
-TARGET_COL = "Irrigation_Need"
-ID_COL = "id"
-
-NUMERIC_FEATURES = [
-    "Soil_pH", "Soil_Moisture", "Organic_Carbon", "Electrical_Conductivity",
-    "Temperature_C", "Humidity", "Rainfall_mm", "Sunlight_Hours",
-    "Wind_Speed_kmh", "Field_Area_hectare", "Previous_Irrigation_mm",
-]
-
-CATEGORICAL_FEATURES = [
-    "Soil_Type", "Crop_Type", "Crop_Growth_Stage", "Season",
-    "Irrigation_Type", "Water_Source", "Mulching_Used", "Region",
-]
+# ─── COLUMN DEFINITIONS (from configs/competition.yaml) ────────────────
+_task = get_task()
+_dataset = get_dataset()
+TARGET_COL = _task["target_col"]
+ID_COL = _task["id_col"]
+NUMERIC_FEATURES = _dataset["numeric_features"]
+CATEGORICAL_FEATURES = _dataset["categorical_features"]
 
 # ─── FEATURE ENGINEERING ────────────────────────────────────────────────
 # Agent: modify this function to add interactions, ratios, polynomial
