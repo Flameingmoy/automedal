@@ -25,16 +25,20 @@ Each experiment runs within a **10-minute wall clock budget** on an **RTX 4070 T
 ## Project Structure
 
 ```
-prepare.py        — Data pipeline: loading, cleaning, feature engineering, encoding (agent-editable)
-train.py          — Training sandbox: models, HPO, ensembling, submissions (agent-editable)
-program.md        — Research loop instructions for the agent (human-editable)
-AGENTS.md         — OpenCode project context: rules, libraries, hardware (human-editable)
-run.sh            — Headless automation loop (invokes opencode repeatedly)
-analysis.ipynb    — Experiment tracking and visualization
-results.tsv       — Experiment log (appended by train.py)
-pyproject.toml    — Dependencies (managed by uv)
-data/             — Raw CSVs + preprocessed .npy arrays
-submissions/      — Timestamped Kaggle submission CSVs
+prepare.py          — Data pipeline: loading, cleaning, feature engineering, encoding (agent-editable)
+train.py            — Training sandbox: models, HPO, ensembling, submissions (agent-editable)
+config_loader.py    — Loads configs/competition.yaml (shared by prepare.py and train.py)
+program.md          — Research loop instructions for the agent (rendered from template)
+AGENTS.md           — Agent context: rules, libraries, hardware (rendered from template)
+run.sh              — Headless automation loop (invokes opencode repeatedly)
+analysis.ipynb      — Experiment tracking and visualization
+results.tsv         — Experiment log (appended by train.py)
+pyproject.toml      — Dependencies (managed by uv)
+configs/            — competition.yaml: single source of truth for active competition
+templates/          — Jinja2 templates for AGENTS.md, program.md, starter prepare.py
+scout/              — Competition discovery, selection, and bootstrap pipeline
+data/               — Raw CSVs + preprocessed .npy arrays
+submissions/        — Timestamped Kaggle submission CSVs
 ```
 
 ## Quick Start
@@ -101,14 +105,47 @@ AutoGluon is available as an optional install: `uv sync --extra automl`
 - **Ensemble by default.** The baseline trains XGBoost + LightGBM + CatBoost in parallel, then finds optimal blending weights via grid search.
 - **Automatic submissions.** Every time `val_loss` improves, a Kaggle-ready submission CSV is generated in `submissions/`.
 
-## Adapting to a New Competition
+## Scout: Switching Competitions
 
-1. Replace `data/train.csv` and `data/test.csv` with the new competition data
-2. Update `prepare.py`: change `TARGET_COL`, `NUMERIC_FEATURES`, `CATEGORICAL_FEATURES`
-3. Update `train.py`: adjust `num_classes`, metric, and submission format
-4. Update `program.md` and `AGENTS.md` with competition context
-5. Run `uv run python prepare.py` to regenerate `.npy` files
-6. Clear `results.tsv` and start fresh
+AutoMedal includes a scout layer that automates competition discovery and setup.
+
+### 1. Discover competitions
+
+```bash
+# Run manually
+uv run python scout/discover.py
+
+# Or let GitHub Actions run it weekly (requires KAGGLE_USERNAME + KAGGLE_KEY secrets)
+```
+
+This scores all active Kaggle competitions using two-stage heuristics (metadata + file listing) and writes a ranked shortlist to `scout/outputs/competition_candidates.md`.
+
+### 2. Select a competition
+
+```bash
+uv run python scout/select.py
+```
+
+Displays the ranked list in terminal. Pick by number or slug.
+
+### 3. Bootstrap (automatic after selection)
+
+Or run directly:
+
+```bash
+uv run python scout/bootstrap.py <competition-slug>
+```
+
+This downloads data, infers schema, writes `configs/competition.yaml`, renders `AGENTS.md` and `program.md` from templates, generates a starter `prepare.py`, resets `results.tsv`, and runs `prepare.py` — all automatically.
+
+### Manual setup (alternative)
+
+If you prefer manual control, edit `configs/competition.yaml` directly and run:
+
+```bash
+uv run python scout/render.py    # Re-render AGENTS.md and program.md
+uv run python prepare.py         # Regenerate .npy arrays
+```
 
 ## Acknowledgements
 

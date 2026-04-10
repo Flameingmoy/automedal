@@ -13,7 +13,7 @@ wheels/
 data/*.csv
 data/*.npy
 data/*.json
-playground-series-s6e4/
+playground-series-*/
 
 # Submissions
 submissions/
@@ -21,6 +21,9 @@ submissions/
 # Experiment logs & results
 results.tsv
 agent_loop.log
+
+# Scout outputs (generated, not committed)
+scout/outputs/
 
 # Agent working files
 worktrees/
