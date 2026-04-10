@@ -1,0 +1,68 @@
+# configs/competition.yaml — Single source of truth for active competition
+# Generated from existing hardcoded values in prepare.py and train.py
+
+# ─── Identity ───
+competition:
+  slug: "playground-series-s6e4"
+  title: "Playground Series S6E4"
+  subtitle: "Irrigation Prediction"
+  url: "https://www.kaggle.com/competitions/playground-series-s6e4"
+  deadline: "2026-04-30"
+
+# ─── Task ───
+task:
+  type: "multiclass"
+  target_col: "Irrigation_Need"
+  id_col: "id"
+  class_names:
+    - "High"
+    - "Low"
+    - "Medium"
+  num_classes: 3
+  eval_metric_kaggle: "accuracy"
+  eval_metric_proxy: "log_loss"
+
+# ─── Dataset shape ───
+dataset:
+  train_rows: 630000
+  test_rows: 270000
+  numeric_features:
+    - "Soil_pH"
+    - "Soil_Moisture"
+    - "Organic_Carbon"
+    - "Electrical_Conductivity"
+    - "Temperature_C"
+    - "Humidity"
+    - "Rainfall_mm"
+    - "Sunlight_Hours"
+    - "Wind_Speed_kmh"
+    - "Field_Area_hectare"
+    - "Previous_Irrigation_mm"
+  categorical_features:
+    - "Soil_Type"
+    - "Crop_Type"
+    - "Crop_Growth_Stage"
+    - "Season"
+    - "Irrigation_Type"
+    - "Water_Source"
+    - "Mulching_Used"
+    - "Region"
+
+# ─── Submission format ───
+submission:
+  id_col: "id"
+  target_col: "Irrigation_Need"
+  format: "class_label"
+
+# ─── Model objectives (derived from task.type, but overridable) ───
+objectives:
+  xgboost: "multi:softprob"
+  xgboost_eval: "mlogloss"
+  lightgbm: "multiclass"
+  catboost: "MultiClass"
+
+# ─── Metadata ───
+meta:
+  bootstrapped_at: "2025-04-10T22:00:00"
+  sniff_confidence: 1.0
+  human_verified: true
