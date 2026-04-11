@@ -9,14 +9,14 @@ wheels/
 # Virtual environments
 .venv
 
-# Data — too large for git
+# Competition data — all per-competition files live under data/ and are
+# untracked (too large, each user pulls their own via scout/bootstrap).
+# This covers raw CSVs (train/test/sample_submission), preprocessed .npy
+# arrays, metadata JSON, and generated submission CSVs.
 data/*.csv
 data/*.npy
 data/*.json
 playground-series-*/
-
-# Submissions
-submissions/
 
 # Experiment logs & results
 results.tsv

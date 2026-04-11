@@ -196,7 +196,6 @@ def prepare_data():
 
 if __name__ == "__main__":
     os.makedirs(DATA_DIR, exist_ok=True)
-    os.makedirs("submissions", exist_ok=True)
     if not os.path.exists(TRAIN_CSV):
         print(f"Error: Place train.csv in '{DATA_DIR}/' first.")
     elif not os.path.exists(TEST_CSV):

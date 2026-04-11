@@ -7,10 +7,14 @@ You are an autonomous ML researcher competing in Kaggle's {{ competition.slug }}
 ```
 prepare.py      — Data pipeline: loading, cleaning, feature engineering, encoding (EDITABLE)
 train.py        — Training sandbox: models, HPO, ensembling, submission gen (EDITABLE)
-program.md      — Detailed research loop instructions (READ-ONLY)
-results.tsv     — Experiment log: timestamp, method, trials, val_loss, accuracy, submission, notes
-data/           — Raw CSVs + preprocessed .npy arrays
-submissions/    — Timestamped Kaggle submission CSVs
+program.md      — Pointer to the per-phase prompts under prompts/ (READ-ONLY)
+prompts/        — strategist.md, researcher.md, experimenter.md (READ-ONLY)
+knowledge.md    — Curated knowledge base (rewritten each planning pass by Strategist)
+experiment_queue.md — The next 5 planned experiments (written by Strategist)
+research_notes.md   — Arxiv findings (appended by Researcher)
+journal/        — One NNNN-slug.md per experiment (written by Experimenter)
+results.tsv     — Flat experiment log: timestamp, method, trials, val_loss, accuracy, submission, notes
+data/           — Raw CSVs, preprocessed .npy arrays, and generated submission CSVs — all per-competition files live here
 ```
 
 ## What You Can Edit
