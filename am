@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+# am — AutoMedal convenience wrapper
+# Usage: ./am <command> [args...]
+#
+# One script to rule the common flows: first-run setup, competition bootstrap,
+# loop dispatch, health checks. Dispatches into scout/ and harness/ — never
+# reimplements them.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+# ── First-run setup detection ─────────────────────────────────────────
+needs_setup() {
+    # Setup is complete if at least one provider env var is exported,
+    # or ~/.pi/auth.json has at least one api-key entry.
+    for v in OPENCODE_API_KEY OPENROUTER_API_KEY ANTHROPIC_API_KEY \
+             OPENAI_API_KEY GROQ_API_KEY GEMINI_API_KEY \
+             MISTRAL_API_KEY CEREBRAS_API_KEY XAI_API_KEY \
+             ZAI_API_KEY AZURE_OPENAI_API_KEY AI_GATEWAY_API_KEY; do
+        if [ -n "${!v:-}" ]; then
+            return 1
+        fi
+    done
+    if [ -f "$HOME/.pi/auth.json" ] && \
+       grep -q '"api-key"' "$HOME/.pi/auth.json" 2>/dev/null; then
+        return 1
+    fi
+    return 0
+}
+
+CMD="${1:-help}"
+shift || true
+
+# Gate every non-help/setup command behind first-run setup.
+case "$CMD" in
+    setup|help|--help|-h|doctor) ;;
+    *)
+        if needs_setup; then
+            echo "AutoMedal isn't configured yet."
+            echo "Run:  ./am setup"
+            exit 1
+        fi
+        ;;
+esac
+
+case "$CMD" in
+
+  setup)
+    echo "AutoMedal first-run setup"
+    echo "─────────────────────────"
+    echo ""
+    echo "Which model provider do you want to use?"
+    echo "  1) OpenCode Go  (default — one sk- key unlocks GLM/Kimi/MiMo/MiniMax)"
+    echo "  2) OpenRouter   (free-tier models available; aggregates many providers)"
+    echo "  3) Ollama       (local models, no key needed — requires Ollama installed)"
+    echo "  4) Anthropic    (direct Claude access)"
+    echo "  5) OpenAI       (direct GPT access)"
+    echo ""
+    read -rp "Choice [1]: " choice
+    choice="${choice:-1}"
+
+    case "$choice" in
+      1) provider="opencode-go"; env_var="OPENCODE_API_KEY"  ; default_model="opencode-go/minimax-m2.7" ;;
+      2) provider="openrouter" ; env_var="OPENROUTER_API_KEY"; default_model="openrouter/<your-model>" ;;
+      3) provider="ollama"     ; env_var=""                  ; default_model="ollama/<your-local-model>" ;;
+      4) provider="anthropic"  ; env_var="ANTHROPIC_API_KEY" ; default_model="anthropic/claude-sonnet-4-5" ;;
+      5) provider="openai"     ; env_var="OPENAI_API_KEY"    ; default_model="openai/gpt-4o" ;;
+      *) echo "Unknown choice: $choice"; exit 1 ;;
+    esac
+
+    if [ -n "$env_var" ]; then
+        echo ""
+        read -rsp "Paste your $provider API key (input hidden): " apikey
+        echo ""
+        if [ -z "$apikey" ]; then
+            echo "Empty key, aborting."
+            exit 1
+        fi
+        # Prefer pi's own config command; fall back to writing auth.json directly.
+        if pi config set-key "$provider" "$apikey" 2>/dev/null; then
+            echo "✓ Saved via pi config"
+        else
+            mkdir -p "$HOME/.pi"
+            APIKEY="$apikey" PROVIDER="$provider" python3 <<'PY'
+import json, os, pathlib
+p = pathlib.Path.home() / ".pi" / "auth.json"
+data = json.loads(p.read_text()) if p.exists() else {}
+data.setdefault(os.environ["PROVIDER"], {})["api-key"] = os.environ["APIKEY"]
+p.write_text(json.dumps(data, indent=2))
+print("✓ Saved to ~/.pi/auth.json")
+PY
+        fi
+        unset apikey
+    else
+        echo "(no key needed for $provider)"
+    fi
+
+    echo ""
+    echo "Setup complete."
+    echo "  Provider:      $provider"
+    echo "  Default model: $default_model"
+    echo ""
+    if [ "$provider" != "opencode-go" ]; then
+        echo "To use this provider with ./am run, export MODEL:"
+        echo "  MODEL=\"$default_model\" ./am run 50"
+        echo ""
+    fi
+    echo "Running smoke test..."
+    if pi --no-session --model "$default_model" -p "Say READY and nothing else." 2>&1 | tail -20 | grep -qi "READY"; then
+        echo "✓ Smoke test passed"
+    else
+        echo "⚠  Smoke test did not return READY — run ./am doctor for details"
+    fi
+    ;;
+
+  doctor)
+    echo "── pi version ──"
+    pi --version 2>&1 || echo "(pi not found on PATH)"
+    echo ""
+    echo "── active provider env vars ──"
+    found_any=0
+    for v in OPENCODE_API_KEY OPENROUTER_API_KEY ANTHROPIC_API_KEY \
+             OPENAI_API_KEY GROQ_API_KEY GEMINI_API_KEY; do
+        if [ -n "${!v:-}" ]; then
+            echo "  $v is set"
+            found_any=1
+        fi
+    done
+    [ "$found_any" = "0" ] && echo "  (none exported in current shell)"
+    echo ""
+    echo "── pi auth.json ──"
+    if [ -f "$HOME/.pi/auth.json" ]; then
+        python3 -c "
+import json, pathlib
+d = json.loads(pathlib.Path.home().joinpath('.pi/auth.json').read_text())
+print('  providers configured:', ', '.join(d.keys()) if d else '(empty)')
+"
+    else
+        echo "  (no ~/.pi/auth.json)"
+    fi
+    echo ""
+    echo "── smoke test ──"
+    MODEL_USE="${MODEL:-opencode-go/minimax-m2.7}"
+    echo "  model: $MODEL_USE"
+    pi --no-session --model "$MODEL_USE" -p "Say READY and nothing else." 2>&1 | tail -5
+    ;;
+
+  discover)
+    uv run python scout/discover.py "$@"
+    ;;
+
+  select)
+    uv run python scout/select.py "$@"
+    ;;
+
+  bootstrap)
+    if [ $# -lt 1 ]; then
+        echo "Usage: ./am bootstrap <slug>"
+        echo "Example: ./am bootstrap playground-series-s6e4"
+        exit 1
+    fi
+    uv run python scout/bootstrap.py "$@"
+    ;;
+
+  prepare)
+    uv run python prepare.py "$@"
+    ;;
+
+  render)
+    uv run python scout/render.py "$@"
+    ;;
+
+  run)
+    bash run.sh "${1:-50}"
+    ;;
+
+  status)
+    echo "── knowledge.md (head) ──"
+    if [ -f knowledge.md ]; then
+        head -20 knowledge.md
+    else
+        echo "(no knowledge.md — run ./am bootstrap first)"
+    fi
+    echo ""
+    echo "── results.tsv (tail) ──"
+    if [ -f results.tsv ]; then
+        tail -5 results.tsv
+    else
+        echo "(no results.tsv yet)"
+    fi
+    echo ""
+    echo "── latest exp tags ──"
+    git tag -l 'exp/*' | tail -5 || echo "(no experiment tags)"
+    ;;
+
+  clean)
+    read -rp "Wipe memory files and results.tsv? [y/N] " ans
+    if [[ "$ans" == "y" || "$ans" == "Y" ]]; then
+        uv run python harness/init_memory.py --force
+        rm -f results.tsv
+        echo "✓ Memory reset"
+    else
+        echo "Aborted."
+    fi
+    ;;
+
+  help|--help|-h|*)
+    cat <<EOF
+am — AutoMedal convenience wrapper
+
+One-time:
+  ./am setup                 configure a model provider (first-run)
+  ./am doctor                diagnose pi/provider/env state
+
+Competition setup:
+  ./am discover              list active Kaggle competitions
+  ./am select                pick one interactively
+  ./am bootstrap <slug>      download + wire up a competition
+  ./am prepare               regenerate .npy arrays from data/
+  ./am render                re-render AGENTS.md from template
+
+Loop:
+  ./am run [N]               start the three-phase loop (default 50)
+  ./am status                quick health check (knowledge + last results)
+  ./am clean                 wipe memory files + results.tsv (confirms first)
+
+Env vars honored by ./am run:
+  MODEL              agent model slug, default opencode-go/minimax-m2.7
+  STAGNATION_K       consecutive non-improving runs before research (default 3)
+  RESEARCH_EVERY     scheduled research cadence (default 10, 0 disables)
+  LOG_FILE           combined loop log path (default agent_loop.log)
+EOF
+    ;;
+esac
