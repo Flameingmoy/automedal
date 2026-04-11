@@ -69,7 +69,7 @@ AutoMedal v2 is a three-phase loop driven by `run.sh`. Each phase is a separate 
         └──────────────────────────────────────────────┘
 ```
 
-Three pieces of state the agent never holds in context between phases — it all goes through files. Each `opencode run` starts with a small, focused prompt, reads exactly what it needs from files, runs one phase, and exits. No single invocation lives long enough to hit opencode's auto-compaction.
+The agent never holds state in context between phases — everything goes through files. Each `opencode run` starts with a small, focused prompt, reads exactly what it needs from files, runs one phase, and exits. No single invocation lives long enough to hit opencode's auto-compaction.
 
 ### Key design principles
 

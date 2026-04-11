@@ -1,0 +1,47 @@
+[
+  {
+    "body": "need to check wether other coding agents like goose , or pi agent give more flexibility and customisability for our use case",
+    "number": 9,
+    "title": "Optimisation by changing coding agent"
+  },
+  {
+    "body": "Need to test this but what if the we are able to make the agent plan better by giving the number of  experiments it can do as a constraint, so it researches and preps and plans the first 5 approaches and then evaluates the results then next 5 all the way till finish. Not necessary for it to be every 5 could be every 3 also and so on. ",
+    "number": 8,
+    "title": "Experiment planning step enhancement"
+  },
+  {
+    "body": "Way to track past experiments in the hypothesis framing to see what was done earlier what was similar and how to improve. A kind of knowledge graph but with methods used. ",
+    "number": 7,
+    "title": "Agent Harness Improvements"
+  },
+  {
+    "body": "",
+    "number": 6,
+    "title": "Add support for MLX, AMD and Intel"
+  },
+  {
+    "body": "Current approach of agent trying by itself without a compacting loop or feels like context will likely explode and when opencode will auto-compact the next experiment will be better than some of the previous experiments so essentially need to think of a better way to manage this and optimise it even for 100 experiment runs.",
+    "number": 5,
+    "title": "Context management"
+  },
+  {
+    "body": "While researching the next experiment after an experiment allow the option of searching up arxiv papers and do self improvement and apply that, not exactly RL and not for each turn. ",
+    "number": 4,
+    "title": "Ability to do scientific research"
+  },
+  {
+    "body": "Improving agent harness to make it more efficient at coding and tracking results thinking of a knowledge graph tangent. ",
+    "number": 3,
+    "title": "Improve agent harness"
+  },
+  {
+    "body": "Need to make automedal compatible with a variety of coding agents such as claude-code, gemini cli, cline, aider, goose, kilo code, qwen code, pi agent and so on any coding agent with over 20k stars or widely used",
+    "number": 2,
+    "title": "Compatibility with Various platforms"
+  },
+  {
+    "body": "Make automedal compatible with Kaggle CLI letting users to assign competition and agent to pick up the data and context behind the competition then proceeding to solve, should be part of the shell script. ",
+    "number": 1,
+    "title": "Kaggle CLI Compatibility"
+  }
+]
