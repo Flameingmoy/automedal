@@ -1,7 +1,7 @@
 [project]
 name = "autoresearch-kaggle"
 version = "0.1.0"
-description = "Autonomous Kaggle competition research with OpenCode + GLM-5.1"
+description = "Autonomous Kaggle competition research — agent-agnostic harness"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 dependencies = [
