@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # AutoMedal — Headless Three-Phase Loop
-# Each iteration dispatches up to three opencode phases against file-based memory:
+# Each iteration dispatches up to three agent phases against file-based memory:
 #   Researcher (on stagnation or scheduled cadence)
 #   Strategist (on empty queue or stagnation)
 #   Experimenter (always — pops the next pending queue entry)
+#
+# Agent: pi (https://github.com/badlogic/pi-mono). Always runs in YOLO mode.
 #
 # Usage:
 #   bash run.sh              # 50 iterations (default)
@@ -17,7 +19,7 @@ FAST_MODE=${2:-""}
 
 STAGNATION_K=${STAGNATION_K:-3}
 RESEARCH_EVERY=${RESEARCH_EVERY:-10}
-MODEL=${MODEL:-"opencode-go/glm-5.1"}
+MODEL=${MODEL:-"opencode-go/minimax-m2.7"}
 LOG_FILE=${LOG_FILE:-"agent_loop.log"}
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -42,8 +44,8 @@ fi
 # Ensure memory files exist (harmless if already present)
 python harness/init_memory.py 2>&1 | tee -a "$LOG_FILE"
 
-run_opencode() {
-    # $1 = phase name, $2 = prompt file, $3 = trailing context block
+run_agent() {
+    # $1 = phase name (unused, kept for log parity), $2 = prompt file, $3 = trailing context block
     local phase="$1"
     local prompt_file="$2"
     local context="$3"
@@ -56,12 +58,10 @@ run_opencode() {
 
 $context"
 
-    opencode run \
-        -m "$MODEL" \
-        --dangerously-skip-permissions \
-        --title "automedal-$phase-$EXP_ID" \
-        "$prompt_body" \
-        2>&1 | tee -a "$LOG_FILE"
+    pi --no-session \
+       --model "$MODEL" \
+       -p "$prompt_body" \
+       2>&1 | tee -a "$LOG_FILE"
 }
 
 for i in $(seq 1 "$MAX_ITERATIONS"); do
@@ -86,7 +86,7 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
         [ "$SCHEDULED_RESEARCH" = "1" ] && [ "$STAGNATING" = "0" ] && TRIGGER="scheduled"
 
         echo "  [harness] dispatching Researcher ($TRIGGER)" | tee -a "$LOG_FILE"
-        run_opencode "researcher" "prompts/researcher.md" "Triggering experiment: $EXP_ID
+        run_agent "researcher" "prompts/researcher.md" "Triggering experiment: $EXP_ID
 Trigger type: $TRIGGER
 Stagnating: $STAGNATING
 Scheduled research: $SCHEDULED_RESEARCH
@@ -99,7 +99,7 @@ Current best val_loss: $BEST" || echo "  [WARN] Researcher exited non-zero"
     QUEUE_PENDING=$(grep -c '\[STATUS: pending\]' experiment_queue.md 2>/dev/null || echo 0)
     if [ "$QUEUE_PENDING" = "0" ] || [ "$STAGNATING" = "1" ]; then
         echo "  [harness] dispatching Strategist (queue_pending=$QUEUE_PENDING, stagnating=$STAGNATING)" | tee -a "$LOG_FILE"
-        run_opencode "strategist" "prompts/strategist.md" "Upcoming experiment: $EXP_ID
+        run_agent "strategist" "prompts/strategist.md" "Upcoming experiment: $EXP_ID
 Current iteration: $i / $MAX_ITERATIONS
 Stagnating: $STAGNATING
 Current best val_loss: $BEST
@@ -115,7 +115,7 @@ Pending queue entries: $QUEUE_PENDING" || echo "  [WARN] Strategist exited non-z
 
     # ─── Experimenter phase (always) ────
     echo "  [harness] dispatching Experimenter" | tee -a "$LOG_FILE"
-    run_opencode "experimenter" "prompts/experimenter.md" "Experiment ID: $EXP_ID
+    run_agent "experimenter" "prompts/experimenter.md" "Experiment ID: $EXP_ID
 Current best val_loss: $BEST" || echo "  [WARN] Experimenter exited non-zero"
 
     python harness/verify_iteration.py --phase experimenter --exp-id "$EXP_ID" 2>&1 | tee -a "$LOG_FILE" || true
