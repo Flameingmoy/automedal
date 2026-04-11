@@ -476,3 +476,81 @@ The redesign is successful if, after 50 experiments from a clean start:
 - **Issue #9 — alternative coding agents.** Subsumed by issue #2.
 - **Upgrading `knowledge.md` to a structured graph.** Defer until flat markdown demonstrably breaks down (probably >200 experiments).
 - **Per-experiment LLM cost tracking.** Useful but not required for the harness to function; can be added as a separate pass later.
+
+## 13. Integration with scout / templates / config_loader (2026-04-11 addendum)
+
+Since the initial spec was approved, the team landed a scout pipeline that resets the repo for any Kaggle competition (`scout/discover.py`, `scout/select.py`, `scout/bootstrap.py`, `scout/sniff.py`, `scout/render.py`). This addendum records how the v2 harness composes with that pipeline. No core architectural change — only integration details.
+
+### 13.1 New files that already exist and stay unchanged
+
+- `configs/competition.yaml` — canonical per-competition metadata (task type, features, objectives, submission format). Read by `config_loader.py`.
+- `config_loader.py` — already imported by `prepare.py` and `train.py` for objectives and submission column names.
+- `templates/AGENTS.md.j2` — Jinja template that renders into `AGENTS.md` with the competition's task type, class names, metric, and hardware context. **The Experimenter reads the rendered `AGENTS.md` for competition context; the spec contract is unchanged.**
+- `templates/prepare_starter.py.j2` — used only on fresh bootstrap for new competitions, untouched thereafter.
+- `scout/bootstrap.py` — data download + schema sniff + render + `results.tsv` reset; runs once per competition.
+
+### 13.2 Competition-agnostic prompts
+
+The three prompt files (`prompts/strategist.md`, `prompts/researcher.md`, `prompts/experimenter.md`) are **static, competition-agnostic markdown files**. They describe methodology and phase contracts, not the current task. Every prompt instructs the agent to read `AGENTS.md` for the active competition's task type, metric, and hardware. This means switching competitions (via `scout/bootstrap.py`) does not touch the prompts — only `configs/competition.yaml` and the rendered `AGENTS.md` change.
+
+### 13.3 `program.md` is obsoleted
+
+The original plan was to shrink `program.md` to a pointer. The team subsequently turned `program.md` into a rendered Jinja template (`templates/program.md.j2`). Given the new spec, `templates/program.md.j2` is rewritten as a short pointer template (one paragraph: "See `prompts/experimenter.md` for the per-iteration contract, and `AGENTS.md` for competition context"). The `scout/render.py` `RENDER_TARGETS` mapping is unchanged, so `scout/bootstrap.py` continues to render `program.md` without special-casing.
+
+Alternative considered: remove `program.md` entirely and drop it from `RENDER_TARGETS`. Rejected for now to avoid breaking any tooling or documentation that currently links to `program.md`. The pointer approach keeps the file alive at zero maintenance cost.
+
+### 13.4 `scout/bootstrap.py` memory initialization
+
+A new step is added to `scout/bootstrap.py`, between `reset_results()` and `run_prepare()`:
+
+```python
+from harness.init_memory import init_memory
+init_memory(project_root=PROJECT_ROOT, force=True)
+```
+
+`harness/init_memory.py` creates (or resets when `force=True`):
+
+- `knowledge.md` with a one-line header and an empty `## Open questions` section
+- `experiment_queue.md` with a header and no entries
+- `research_notes.md` with just a header
+- `journal/` directory with a `.gitkeep`
+
+Calling `init_memory(force=True)` inside `scout/bootstrap.py` gives every fresh competition a clean memory. For incremental development (re-running bootstrap without a full reset), callers pass `force=False` to preserve existing memory.
+
+### 13.5 Stagnation detector on empty `results.tsv`
+
+`scout/bootstrap.py` resets `results.tsv` to a header-only file. `harness/check_stagnation.py` already handles "fewer than K rows → return 0 (not stagnating)", so the bootstrap case is covered without further changes. Explicit invariant: **a freshly bootstrapped competition must never trigger the Researcher phase in iteration 1**.
+
+### 13.6 Git tracking policy for memory files
+
+`.gitignore` currently excludes `results.tsv`, `agent_loop.log`, and `scout/outputs/`. The new memory files (`knowledge.md`, `experiment_queue.md`, `research_notes.md`, `journal/`) are **deliberately git-tracked** so that:
+
+- Each competition's accumulated learning is preserved across clones
+- Memory drift is visible in diffs (curation bugs are review-friendly)
+- Rollback to a prior strategist pass is a `git checkout` away
+
+No `.gitignore` changes required — the additions are tracked by default.
+
+### 13.7 Migration path for this repo (existing 12 experiments)
+
+For the current `playground-series-s6e4` state, we do **not** rerun `scout/bootstrap.py`. Migration is manual and one-time:
+
+1. Run `harness/init_memory.py` (without `force`) to create the empty memory files
+2. Manually seed `knowledge.md` with hindsight from `results.tsv` and `agent_loop.log` (LR meta-learner loses, LightGBM max_bin=255, XGB-heavy weights win, etc.)
+3. Leave `experiment_queue.md` empty — the first Strategist run will populate it
+4. Leave `journal/` empty — no backfill of past experiments; `verify_iteration.py` only checks new runs
+
+After this migration, the next `bash run.sh` invocation runs the first three-phase iteration: Strategist (queue empty) → Experimenter → done.
+
+### 13.8 File layout delta from Section 4
+
+Add to the "+" list:
+
+```
++ harness/init_memory.py          (memory bootstrap helper; called by scout)
++ journal/.gitkeep                (keeps empty directory in git)
+~ templates/program.md.j2         (rewritten as a short pointer template)
+~ scout/bootstrap.py              (calls init_memory after reset_results)
+```
+
+The rest of Section 4 is unchanged.
