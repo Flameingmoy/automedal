@@ -49,6 +49,10 @@ dependencies = [
 automl = [
     "autogluon.tabular>=1.2",
 ]
+# Arxiv lookups for the Researcher phase (harness v2)
+research = [
+    "arxiv>=2.1",
+]
 
 [tool.uv.sources]
 torch = [
