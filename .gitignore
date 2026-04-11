@@ -9,13 +9,14 @@ wheels/
 # Virtual environments
 .venv
 
-# Competition data — all per-competition files live under data/ and are
-# untracked (too large, each user pulls their own via scout/bootstrap).
-# This covers raw CSVs (train/test/sample_submission), preprocessed .npy
-# arrays, metadata JSON, and generated submission CSVs.
+# Competition inputs live under data/ (raw CSVs + preprocessed .npy
+# arrays + encoder metadata JSON). Generated Kaggle submissions live
+# under submissions/. Both directories are per-competition and stay
+# untracked — each user pulls their own via scout/bootstrap.
 data/*.csv
 data/*.npy
 data/*.json
+submissions/*.csv
 playground-series-*/
 
 # Experiment logs & results

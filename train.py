@@ -48,7 +48,7 @@ SUB_TARGET_COL = _sub["target_col"]
 # ─── HARD CONSTRAINTS ───────────────────────────────────────────────────
 TIME_BUDGET_MINUTES = 10
 DATA_DIR = "data"
-SUBMISSION_DIR = "data"  # per-competition files live together under data/
+SUBMISSION_DIR = "submissions"
 # ────────────────────────────────────────────────────────────────────────
 
 # ─── GPU CONFIG ──────────────────────────────────────────────────────────
