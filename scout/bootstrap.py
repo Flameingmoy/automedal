@@ -30,6 +30,7 @@ if PROJECT_ROOT not in sys.path:
 
 from scout.sniff import sniff_schema
 from scout.render import render_templates, render_prepare_starter
+from harness.init_memory import init_memory
 
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 CONFIGS_DIR = os.path.join(PROJECT_ROOT, "configs")
@@ -286,6 +287,12 @@ def bootstrap(slug, skip_download=False, smoke_test=False):
     # Step 7: Reset results.tsv
     print("\n  Resetting experiment log...")
     reset_results()
+
+    # Step 7b: Initialize harness memory (knowledge.md, queue, research_notes, journal/)
+    print("\n  Initializing harness memory files...")
+    memory_state = init_memory(project_root=PROJECT_ROOT, force=True)
+    for artifact, state in memory_state.items():
+        print(f"    {state:>7}  {artifact}")
 
     # Step 8: Run prepare.py
     success = run_prepare()
