@@ -11,7 +11,7 @@ cd "$(dirname "$0")"
 # ── First-run setup detection ─────────────────────────────────────────
 needs_setup() {
     # Setup is complete if at least one provider env var is exported,
-    # or ~/.pi/auth.json has at least one api-key entry.
+    # or ~/.pi/agent/auth.json has at least one key entry.
     for v in OPENCODE_API_KEY OPENROUTER_API_KEY ANTHROPIC_API_KEY \
              OPENAI_API_KEY GROQ_API_KEY GEMINI_API_KEY \
              MISTRAL_API_KEY CEREBRAS_API_KEY XAI_API_KEY \
@@ -20,8 +20,8 @@ needs_setup() {
             return 1
         fi
     done
-    if [ -f "$HOME/.pi/auth.json" ] && \
-       grep -q '"api-key"' "$HOME/.pi/auth.json" 2>/dev/null; then
+    if [ -f "$HOME/.pi/agent/auth.json" ] && \
+       grep -q '"key"' "$HOME/.pi/agent/auth.json" 2>/dev/null; then
         return 1
     fi
     return 0
@@ -48,15 +48,24 @@ case "$CMD" in
     echo "AutoMedal first-run setup"
     echo "─────────────────────────"
     echo ""
-    echo "Which model provider do you want to use?"
-    echo "  1) OpenCode Go  (default — one sk- key unlocks GLM/Kimi/MiMo/MiniMax)"
-    echo "  2) OpenRouter   (free-tier models available; aggregates many providers)"
-    echo "  3) Ollama       (local models, no key needed — requires Ollama installed)"
-    echo "  4) Anthropic    (direct Claude access)"
-    echo "  5) OpenAI       (direct GPT access)"
+    echo "Default provider: OpenCode Go (one sk- key unlocks GLM/Kimi/MiMo/MiniMax)"
     echo ""
-    read -rp "Choice [1]: " choice
-    choice="${choice:-1}"
+    read -rp "Use OpenCode Go? [Y/switch] " use_default
+    use_default="${use_default:-y}"
+
+    if [[ "$use_default" =~ ^[Ss] ]]; then
+        echo ""
+        echo "  1) OpenCode Go  (default)"
+        echo "  2) OpenRouter   (free-tier models available; aggregates many providers)"
+        echo "  3) Ollama       (local models, no key needed — requires Ollama installed)"
+        echo "  4) Anthropic    (direct Claude access)"
+        echo "  5) OpenAI       (direct GPT access)"
+        echo ""
+        read -rp "Choice [1]: " choice
+        choice="${choice:-1}"
+    else
+        choice=1
+    fi
 
     case "$choice" in
       1) provider="opencode-go"; env_var="OPENCODE_API_KEY"  ; default_model="opencode-go/minimax-m2.7" ;;
@@ -75,20 +84,17 @@ case "$CMD" in
             echo "Empty key, aborting."
             exit 1
         fi
-        # Prefer pi's own config command; fall back to writing auth.json directly.
-        if pi config set-key "$provider" "$apikey" 2>/dev/null; then
-            echo "✓ Saved via pi config"
-        else
-            mkdir -p "$HOME/.pi"
-            APIKEY="$apikey" PROVIDER="$provider" python3 <<'PY'
+        # Write directly to pi's auth file (correct path + format per providers.md)
+        mkdir -p "$HOME/.pi/agent"
+        APIKEY="$apikey" PROVIDER="$provider" python3 <<'PY'
 import json, os, pathlib
-p = pathlib.Path.home() / ".pi" / "auth.json"
+p = pathlib.Path.home() / ".pi" / "agent" / "auth.json"
 data = json.loads(p.read_text()) if p.exists() else {}
-data.setdefault(os.environ["PROVIDER"], {})["api-key"] = os.environ["APIKEY"]
+data[os.environ["PROVIDER"]] = {"type": "api_key", "key": os.environ["APIKEY"]}
 p.write_text(json.dumps(data, indent=2))
-print("✓ Saved to ~/.pi/auth.json")
+p.chmod(0o600)
+print("✓ Saved to ~/.pi/agent/auth.json")
 PY
-        fi
         unset apikey
     else
         echo "(no key needed for $provider)"
@@ -128,14 +134,14 @@ PY
     [ "$found_any" = "0" ] && echo "  (none exported in current shell)"
     echo ""
     echo "── pi auth.json ──"
-    if [ -f "$HOME/.pi/auth.json" ]; then
+    if [ -f "$HOME/.pi/agent/auth.json" ]; then
         python3 -c "
 import json, pathlib
-d = json.loads(pathlib.Path.home().joinpath('.pi/auth.json').read_text())
+d = json.loads(pathlib.Path.home().joinpath('.pi/agent/auth.json').read_text())
 print('  providers configured:', ', '.join(d.keys()) if d else '(empty)')
 "
     else
-        echo "  (no ~/.pi/auth.json)"
+        echo "  (no ~/.pi/agent/auth.json)"
     fi
     echo ""
     echo "── smoke test ──"
