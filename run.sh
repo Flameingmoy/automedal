@@ -60,8 +60,9 @@ $context"
 
     pi --no-session \
        --model "$MODEL" \
+       --mode json \
        -p "$prompt_body" \
-       2>&1 | tee -a "$LOG_FILE"
+       2>>"$LOG_FILE" | tee -a "$LOG_FILE" | python3 -u harness/stream_events.py
 }
 
 for i in $(seq 1 "$MAX_ITERATIONS"); do
