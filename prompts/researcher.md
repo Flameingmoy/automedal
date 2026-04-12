@@ -9,7 +9,7 @@ You are the **Researcher**. Your job is to inject fresh ideas from the arxiv lit
 3. Most recent 3 journal entries — what the recent bottleneck looks like
 4. The trigger metadata passed via the prompt arguments (stagnation flag, current best val_loss)
 
-Do not read `train.py` or `prepare.py` — you are suggesting ideas, not implementing them.
+Do not read `agent/train.py` or `agent/prepare.py` — you are suggesting ideas, not implementing them.
 
 ## Task
 
@@ -46,7 +46,7 @@ Where:
 - Exactly 2-3 papers per entry. Not 1, not 4.
 - Skip papers older than 3 years (check the arxiv date).
 - Do not read full PDFs; abstracts only.
-- Do not touch `train.py`, `prepare.py`, `knowledge.md`, `experiment_queue.md`, or `journal/`.
+- Do not touch `agent/train.py`, `agent/prepare.py`, `knowledge.md`, `experiment_queue.md`, or `journal/`.
 - Do not write experiments yourself — write ideas the Strategist can turn into experiments.
 - If the arxiv package is not installed, install it (`pip install arxiv`) before querying.
 

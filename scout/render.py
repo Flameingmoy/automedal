@@ -25,7 +25,7 @@ TEMPLATES_DIR = os.path.join(PROJECT_ROOT, "templates")
 # Template → output mapping
 RENDER_TARGETS = {
     "AGENTS.md.j2": "AGENTS.md",
-    "program.md.j2": "program.md",
+    "program.md.j2": os.path.join("agent", "program.md"),
 }
 
 
@@ -81,14 +81,14 @@ def render_prepare_starter(config=None):
 
     template_name = "prepare_starter.py.j2"
     template_path = os.path.join(TEMPLATES_DIR, template_name)
-    output_path = os.path.join(PROJECT_ROOT, "prepare.py")
+    output_path = os.path.join(PROJECT_ROOT, "agent", "prepare.py")
 
     if not os.path.exists(template_path):
         print(f"  [SKIP] Template not found: {template_path}")
         return None
 
     if os.path.exists(output_path):
-        print(f"  [SKIP] prepare.py already exists — not overwriting.")
+        print(f"  [SKIP] agent/prepare.py already exists — not overwriting.")
         print(f"         Delete it first if you want a fresh starter.")
         return None
 
@@ -104,7 +104,7 @@ def render_prepare_starter(config=None):
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(output)
 
-    print(f"  Rendered: {template_name} -> prepare.py")
+    print(f"  Rendered: {template_name} -> agent/prepare.py")
     return output_path
 
 

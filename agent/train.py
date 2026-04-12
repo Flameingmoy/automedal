@@ -22,6 +22,7 @@ RULES:
 
 import time
 import os
+import sys
 import json
 import datetime
 import numpy as np
@@ -33,6 +34,13 @@ import optuna
 from sklearn.metrics import accuracy_score, log_loss
 from sklearn.model_selection import StratifiedKFold
 from sklearn.linear_model import LogisticRegression
+
+# Resolve paths relative to the repo root (one level above agent/)
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from config_loader import get_objectives, get_submission
 
 # ─── CONFIG-DRIVEN OBJECTIVES (from configs/competition.yaml) ────────
@@ -47,8 +55,8 @@ SUB_TARGET_COL = _sub["target_col"]
 
 # ─── HARD CONSTRAINTS ───────────────────────────────────────────────────
 TIME_BUDGET_MINUTES = 10
-DATA_DIR = "data"
-SUBMISSION_DIR = "submissions"
+DATA_DIR = os.path.join(_REPO_ROOT, "data")
+SUBMISSION_DIR = os.path.join(_REPO_ROOT, "submissions")
 # ────────────────────────────────────────────────────────────────────────
 
 # ─── GPU CONFIG ──────────────────────────────────────────────────────────
@@ -76,7 +84,7 @@ def load_data():
 
 def get_best_score():
     """Read the current best val_loss from results.tsv (if it exists)."""
-    results_file = "results.tsv"
+    results_file = os.path.join(_AGENT_DIR, "results.tsv")
     if not os.path.exists(results_file):
         return float("inf")
     try:
@@ -473,7 +481,7 @@ def main():
         print(f"\n  No improvement ({val_loss:.4f} >= {previous_best:.4f})")
 
     # ─── LOG RESULTS ─────────────────────────────────────────────────────
-    results_file = "results.tsv"
+    results_file = os.path.join(_AGENT_DIR, "results.tsv")
     write_header = not os.path.exists(results_file)
     with open(results_file, "a") as f:
         if write_header:

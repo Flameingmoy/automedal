@@ -21,7 +21,7 @@ import os
 import sys
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RESULTS_FILE = os.path.join(PROJECT_ROOT, "results.tsv")
+RESULTS_FILE = os.path.join(PROJECT_ROOT, "agent", "results.tsv")
 VAL_LOSS_COL = "val_loss"
 
 

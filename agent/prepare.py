@@ -13,13 +13,20 @@ Target: Irrigation_Need (Low / Medium / High)
 import pandas as pd
 import numpy as np
 import os
+import sys
 import json
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
 from sklearn.model_selection import train_test_split
+
+# Resolve paths relative to the repo root (one level above agent/)
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from config_loader import get_task, get_dataset, get_submission
 
 # ─── PATHS ───────────────────────────────────────────────────────────────
-DATA_DIR = "data"
+DATA_DIR = os.path.join(_REPO_ROOT, "data")
 TRAIN_CSV = os.path.join(DATA_DIR, "train.csv")
 TEST_CSV = os.path.join(DATA_DIR, "test.csv")
 RANDOM_SEED = 42
@@ -167,7 +174,7 @@ def prepare_data():
 
 if __name__ == "__main__":
     os.makedirs(DATA_DIR, exist_ok=True)
-    os.makedirs("submissions", exist_ok=True)
+    os.makedirs(os.path.join(_REPO_ROOT, "submissions"), exist_ok=True)
     if not os.path.exists(TRAIN_CSV):
         print(f"Error: Place train.csv in '{DATA_DIR}/' first.")
     elif not os.path.exists(TEST_CSV):

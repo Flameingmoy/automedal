@@ -20,7 +20,7 @@ submissions/*.csv
 playground-series-*/
 
 # Experiment logs & results
-results.tsv
+agent/results.tsv
 agent_loop.log
 
 # Scout outputs (generated, not committed)

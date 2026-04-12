@@ -23,7 +23,7 @@ KNOWLEDGE_PATH = os.path.join(PROJECT_ROOT, "knowledge.md")
 QUEUE_PATH = os.path.join(PROJECT_ROOT, "experiment_queue.md")
 RESEARCH_PATH = os.path.join(PROJECT_ROOT, "research_notes.md")
 JOURNAL_DIR = os.path.join(PROJECT_ROOT, "journal")
-RESULTS_PATH = os.path.join(PROJECT_ROOT, "results.tsv")
+RESULTS_PATH = os.path.join(PROJECT_ROOT, "agent", "results.tsv")
 
 VALID_AXES = {
     "preprocessing",

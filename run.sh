@@ -38,7 +38,7 @@ echo "=================================================="
 # Ensure data exists (first run after bootstrap)
 if [ ! -f "data/X_train.npy" ]; then
     echo "Preparing data first..."
-    python prepare.py 2>&1 | tee -a "$LOG_FILE"
+    python agent/prepare.py 2>&1 | tee -a "$LOG_FILE"
 fi
 
 # Ensure memory files exist (harmless if already present)
@@ -131,6 +131,6 @@ echo ""
 echo "=================================================="
 echo "  AutoMedal complete — $MAX_ITERATIONS iterations"
 echo "  Finished: $(date)"
-echo "  Results:  cat results.tsv"
+echo "  Results:  cat agent/results.tsv"
 echo "  Memory:   knowledge.md / experiment_queue.md / journal/"
 echo "=================================================="

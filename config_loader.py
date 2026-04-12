@@ -2,7 +2,7 @@
 AutoMedal — Competition Config Loader
 ======================================
 Loads configs/competition.yaml and caches it at module level.
-Used by prepare.py and train.py to read competition-specific values.
+Used by agent/prepare.py and agent/train.py to read competition-specific values.
 """
 
 import os

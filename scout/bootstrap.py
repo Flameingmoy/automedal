@@ -34,7 +34,7 @@ from harness.init_memory import init_memory
 
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 CONFIGS_DIR = os.path.join(PROJECT_ROOT, "configs")
-RESULTS_FILE = os.path.join(PROJECT_ROOT, "results.tsv")
+RESULTS_FILE = os.path.join(PROJECT_ROOT, "agent", "results.tsv")
 
 # Objective lookup: task_type → {library: objective_string}
 OBJECTIVE_MAP = {
@@ -212,7 +212,7 @@ def run_prepare():
     """Run prepare.py to generate .npy arrays."""
     print("\n  Running prepare.py...")
     result = subprocess.run(
-        [sys.executable, os.path.join(PROJECT_ROOT, "prepare.py")],
+        [sys.executable, os.path.join(PROJECT_ROOT, "agent", "prepare.py")],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,

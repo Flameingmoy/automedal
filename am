@@ -162,7 +162,7 @@ print('  providers configured:', ', '.join(d.keys()) if d else '(empty)')
     ;;
 
   prepare)
-    uv run python prepare.py "$@"
+    uv run python agent/prepare.py "$@"
     ;;
 
   render)
@@ -182,8 +182,8 @@ print('  providers configured:', ', '.join(d.keys()) if d else '(empty)')
     fi
     echo ""
     echo "── results.tsv (tail) ──"
-    if [ -f results.tsv ]; then
-        tail -5 results.tsv
+    if [ -f agent/results.tsv ]; then
+        tail -5 agent/results.tsv
     else
         echo "(no results.tsv yet)"
     fi
@@ -196,7 +196,7 @@ print('  providers configured:', ', '.join(d.keys()) if d else '(empty)')
     read -rp "Wipe memory files and results.tsv? [y/N] " ans
     if [[ "$ans" == "y" || "$ans" == "Y" ]]; then
         uv run python harness/init_memory.py --force
-        rm -f results.tsv
+        rm -f agent/results.tsv
         echo "✓ Memory reset"
     else
         echo "Aborted."
