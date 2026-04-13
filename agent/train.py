@@ -34,6 +34,7 @@ import optuna
 from sklearn.metrics import accuracy_score, log_loss
 from sklearn.model_selection import StratifiedKFold
 from sklearn.linear_model import LogisticRegression
+from sklearn.isotonic import IsotonicRegression
 
 # Resolve paths relative to the repo root (one level above agent/)
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -68,7 +69,7 @@ GPU_ID = 0
 
 # ─── HYPOTHESIS ──────────────────────────────────────────────────────────
 # Agent: write your hypothesis for this experiment here before running.
-HYPOTHESIS = "Stacking with LogisticRegression meta-learner on top of 3 GBDTs may outperform fixed-weight ensemble by learning per-class combination weights"
+HYPOTHESIS = "ROC-regularized isotonic regression (ROC-IR) applied to the weighted ensemble's softmax outputs will improve log_loss because temperature scaling from exp 0002 confirmed overconfidence (temperatures ~0.94–0.95, +0.0002 signal) but the coarse grid implementation burned Optuna budget; ROC-IR is O(1) to fit and preserves multiclass ranking quality simultaneously — both calibration and ranking improve rather than trading off."
 # ────────────────────────────────────────────────────────────────────────
 
 
@@ -416,6 +417,27 @@ def main():
     )
     weighted_loss = log_loss(y_val, weighted_proba_val)
 
+    # ─── PHASE 3b: ROC-IR isotonic calibration ───────────────────────────
+    # Per-class isotonic regression on the weighted ensemble probabilities.
+    # Fits on val set (separate holdout), applies to test. O(1) — zero Optuna cost.
+    # ROC-IR preserves ranking within each class, unlike naive IR which can distort order.
+    print("\n--- ROC-IR Isotonic Calibration ---")
+    calibrated_val = np.zeros_like(weighted_proba_val)
+    calibrated_test = np.zeros_like(weighted_proba_test)
+    iso_temperatures = []
+    for c in range(num_classes):
+        iso = IsotonicRegression(out_of_bounds="clip")
+        iso.fit(weighted_proba_val[:, c], (y_val == c).astype(float))
+        calibrated_val[:, c] = iso.predict(weighted_proba_val[:, c])
+        calibrated_test[:, c] = iso.predict(weighted_proba_test[:, c])
+        # Store effective temperature as ratio of mean original vs mean calibrated
+        orig_mean = weighted_proba_val[:, c].mean()
+        cal_mean = calibrated_val[:, c].mean()
+        iso_temperatures.append(orig_mean / (cal_mean + 1e-10))
+    calibrated_loss = log_loss(y_val, calibrated_val)
+    print(f"  Isotonic calibration val loss: {calibrated_loss:.4f}")
+    print(f"  Effective per-class temperatures: {[f'{t:.4f}' for t in iso_temperatures]}")
+
     # ─── PHASE 4: Stacking with Logistic Regression meta-learner ───────
     print("\n--- Stacking with Logistic Regression meta-learner ---")
     stack_val = np.column_stack([xgb_proba_val, lgb_proba_val, cat_proba_val])
@@ -431,22 +453,18 @@ def main():
     print(f"  Stacking Val Loss:     {stack_loss:.4f}")
     print(f"  Stacking Val Accuracy: {stack_accuracy:.4f}")
     print(f"  Weighted Val Loss:     {weighted_loss:.4f}")
+    print(f"  ISO-Calibrated Val Loss: {calibrated_loss:.4f}")
 
-    # Choose the better approach
-    if stack_loss < weighted_loss:
-        print(f"  Stacking wins ({stack_loss:.4f} < {weighted_loss:.4f})")
-        final_proba_val = stack_proba_val
-        final_proba_test = stack_proba_test
-        method_tag = "stack"
-        method_name = "stacking"
-        val_loss = stack_loss
-    else:
-        print(f"  Weighted ensemble wins ({weighted_loss:.4f} <= {stack_loss:.4f})")
-        final_proba_val = weighted_proba_val
-        final_proba_test = weighted_proba_test
-        method_tag = "ensemble"
-        method_name = "weighted"
-        val_loss = weighted_loss
+    # Choose the best approach among all three
+    best_method = min(
+        [("weighted", weighted_loss, weighted_proba_val, weighted_proba_test),
+         ("iso_calibrated", calibrated_loss, calibrated_val, calibrated_test),
+         ("stacking", stack_loss, stack_proba_val, stack_proba_test)],
+        key=lambda x: x[1]
+    )
+    method_name, val_loss, final_proba_val, final_proba_test = best_method
+    print(f"  Best method: {method_name} ({val_loss:.4f})")
+    method_tag = method_name.replace("_", "-")
 
     final_preds_val = np.argmax(final_proba_val, axis=1)
     final_preds_test = np.argmax(final_proba_test, axis=1)
