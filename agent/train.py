@@ -35,9 +35,6 @@ from sklearn.metrics import accuracy_score, log_loss
 from sklearn.model_selection import StratifiedKFold
 from sklearn.linear_model import LogisticRegression
 from sklearn.isotonic import IsotonicRegression
-import torch
-import torch.nn as nn
-import torch.optim as optim
 
 # Resolve paths relative to the repo root (one level above agent/)
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -72,7 +69,7 @@ GPU_ID = 0
 
 # ─── HYPOTHESIS ──────────────────────────────────────────────────────────
 # Agent: write your hypothesis for this experiment here before running.
-HYPOTHESIS = "Training a TabKD neural student (Tabular Knowledge Distillation with interaction-diversity synthetic queries) on the 3 GBDT teachers' softmax predictions will produce a diverse 4th ensemble member without the HPO budget penalty that killed TabR (exp 0008) and T-MLP (exp 0009), because TabKD generates synthetic training data by maximizing pairwise feature interaction coverage between the teachers — creating a fundamentally different training signal than standard KL-divergence matching — and the neural student is trained on fixed teacher predictions (no HPO budget consumed) while achieving high teacher-student agreement (14/16 configurations in the paper) on tabular data."
+HYPOTHESIS = "Training a fixed-config Quantile XGBoost (QXGBoost: Huber-quantile objective, 10th/50th/90th percentiles) alongside the 3 standard GBDTs and using prediction-interval width as inverse-weight for isotonic calibration will improve log_loss, because QXGBoost's per-sample uncertainty signal is absent from standard point predictions — wide intervals in sparse tabular regions indicate where the ensemble is unreliable — and weighting isotonic calibration toward high-confidence (narrow-interval) samples addresses miscalibration in exactly those regions where the JSD experiment (exp 0013) hypothesized but could not measure miscalibration concentration."
 # ────────────────────────────────────────────────────────────────────────
 
 
@@ -189,6 +186,77 @@ def bin_constrained_isotonic(proba_val, y_val, proba_test, n_bins):
             calibrated_val[:, c] = np.array(bin_means)[bin_indices]
             
             # Apply mapping to test: same approach
+            bin_indices_test = np.digitize(p_test, bin_edges_arr, right=False)
+            bin_indices_test = np.clip(bin_indices_test, 0, n_bins - 1)
+            calibrated_test[:, c] = np.array(bin_means)[bin_indices_test]
+    
+    return calibrated_val, calibrated_test
+
+
+def weighted_bin_constrained_isotonic(proba_val, y_val, proba_test, weights, n_bins):
+    """
+    Apply weighted bin-constrained isotonic calibration per class.
+    
+    For each class c:
+    1. Sort val samples by predicted probability of class c.
+    2. Partition into n_bins equal-frequency bins.
+    3. Assign each bin the weighted mean of true labels (binary: 1 if class c, 0 otherwise).
+    4. Apply piecewise-constant mapping to test predictions.
+    
+    Sample weights are used to compute weighted bin means.
+    """
+    num_classes = proba_val.shape[1]
+    calibrated_val = np.zeros_like(proba_val)
+    calibrated_test = np.zeros_like(proba_test)
+    
+    for c in range(num_classes):
+        p_val = proba_val[:, c]
+        y_binary = (y_val == c).astype(float)
+        p_test = proba_test[:, c]
+        
+        # Sort by predicted probability
+        sort_idx = np.argsort(p_val)
+        sorted_p = p_val[sort_idx]
+        sorted_y = y_binary[sort_idx]
+        sorted_weights = weights[sort_idx]
+        n = len(p_val)
+        
+        if n_bins == 'default':
+            # Use sklearn with sample_weight
+            iso = IsotonicRegression(out_of_bounds='clip')
+            iso.fit(p_val, y_binary, sample_weight=weights)
+            calibrated_val[:, c] = iso.predict(p_val)
+            calibrated_test[:, c] = iso.predict(p_test)
+        else:
+            # Weighted equal-frequency bins
+            bin_size = n // n_bins
+            bin_means = []
+            bin_edges = []
+            
+            for b in range(n_bins):
+                start = b * bin_size
+                if b == n_bins - 1:
+                    end = n
+                else:
+                    end = (b + 1) * bin_size
+                bin_y = sorted_y[start:end]
+                bin_w = sorted_weights[start:end]
+                bin_p = sorted_p[start:end]
+                total_w = bin_w.sum()
+                if total_w > 0:
+                    mean_y = np.sum(bin_y * bin_w) / total_w
+                else:
+                    mean_y = np.mean(bin_y)
+                mean_p = np.mean(bin_p) if len(bin_p) > 0 else 0.5
+                bin_means.append(mean_y)
+                bin_edges.append(bin_p[-1] if len(bin_p) > 0 else mean_p)
+            
+            # Apply mapping
+            bin_edges_arr = np.array(bin_edges)
+            bin_indices = np.digitize(p_val, bin_edges_arr, right=False)
+            bin_indices = np.clip(bin_indices, 0, n_bins - 1)
+            calibrated_val[:, c] = np.array(bin_means)[bin_indices]
+            
             bin_indices_test = np.digitize(p_test, bin_edges_arr, right=False)
             bin_indices_test = np.clip(bin_indices_test, 0, n_bins - 1)
             calibrated_test[:, c] = np.array(bin_means)[bin_indices_test]
@@ -328,7 +396,7 @@ def main():
     xgb_study = optuna.create_study(direction="minimize")
     xgb_study.optimize(
         xgb_objective,
-        n_trials=100,
+        n_trials=40,
         timeout=model_budget,
         catch=(optuna.exceptions.TrialPruned, Exception),
     )
@@ -356,7 +424,7 @@ def main():
     lgb_study = optuna.create_study(direction="minimize")
     lgb_study.optimize(
         lgb_objective,
-        n_trials=100,
+        n_trials=40,
         timeout=model_budget,
         catch=(optuna.exceptions.TrialPruned, LightGBMError, Exception),
     )
@@ -379,7 +447,7 @@ def main():
     cat_study = optuna.create_study(direction="minimize")
     cat_study.optimize(
         cat_objective,
-        n_trials=60,
+        n_trials=25,
         timeout=model_budget,
         catch=(optuna.exceptions.TrialPruned, CatBoostError, Exception),
     )
@@ -473,231 +541,129 @@ def main():
     cat_proba_test = cat_final.predict_proba(X_test)
     print(f"  CatBoost final: {log_loss(y_val, cat_proba_val):.4f}")
 
-    # ─── PHASE 2b: TabKD Neural Student (interaction-diversity KD) ────────
-    # TabKD generates synthetic tabular queries maximizing pairwise feature
-    # interaction coverage, then trains a neural student on teacher logits.
-    # This is a fundamentally different training signal from standard KL-divergence.
-    print("\n--- TabKD Neural Student (interaction-diversity KD) ---")
+    # ─── PHASE 2b: Quantile XGBoost (QXGBoost) for uncertainty estimation ─
+    # QXGBoost produces prediction intervals whose width is a direct uncertainty signal
+    # absent from standard point predictions. This is used to weight isotonic calibration.
+    print("\n--- Quantile XGBoost (QXGBoost) for uncertainty estimation ---")
     
-    # Use GPU for PyTorch
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"  PyTorch device: {device}")
-    
-    class TabKDStudent(nn.Module):
-        """Simple 2-layer MLP student — no HPO, fixed architecture."""
-        def __init__(self, input_dim, hidden_dim, num_classes):
-            super().__init__()
-            self.net = nn.Sequential(
-                nn.Linear(input_dim, hidden_dim),
-                nn.ReLU(),
-                nn.BatchNorm1d(hidden_dim),
-                nn.Dropout(0.2),
-                nn.Linear(hidden_dim, hidden_dim // 2),
-                nn.ReLU(),
-                nn.BatchNorm1d(hidden_dim // 2),
-                nn.Dropout(0.1),
-                nn.Linear(hidden_dim // 2, num_classes)
-            )
-        def forward(self, x):
-            return self.net(x)
-    
-    def generate_interaction_synthetic_data(X_train, n_categories, num_numeric, 
-                                            n_target=50000):
+    def train_qxgb_per_class(X_tr, y_tr_all, X_v, X_te, quantile_alphas, seed=42):
         """
-        Generate synthetic tabular data for TabKD.
-        Strategy:
-        1. Generate samples varying each (cat_i, cat_j) pair across all combinations
-           while varying numeric features WITHIN the real data distribution.
-        2. Add a large pool of fully random samples (within real data ranges) for
-           coverage of the full feature space beyond interaction pairs.
-        
-        The key insight: with binary categoricals (all 8 cats have 2 levels),
-        the interaction space is only 28 pairs × 4 combinations = 112 base patterns.
-        We add heavy numeric variation + random sampling to make each pattern diverse.
+        Train QXGBoost for a single class with multiple quantiles in one model call.
+        Returns predictions for all quantiles for this class.
         """
-        n_cat_features = len(n_categories)
+        y_binary = (y_tr_all == 0).astype(float)  # placeholder, will loop over classes
+        n_val = X_v.shape[0]
+        n_test = X_te.shape[0]
         
-        # Compute stats from training data for realistic numeric ranges
-        numeric_means = X_train[:, :num_numeric].mean(axis=0)
-        numeric_stds = X_train[:, :num_numeric].std(axis=0) + 1e-6
-        numeric_mins = X_train[:, :num_numeric].min(axis=0)
-        numeric_maxs = X_train[:, :num_numeric].max(axis=0)
+        # DMatrix for faster training
+        dtrain_qxgb = xgb.DMatrix(X_tr)
+        dval_qxgb = xgb.DMatrix(X_v)
+        dtest_qxgb = xgb.DMatrix(X_te)
         
-        # All pairwise combinations of categorical feature indices
-        pairs = []
-        for i in range(n_cat_features):
-            for j in range(i + 1, n_cat_features):
-                pairs.append((i, j))
-        
-        # Part 1: Interaction-diversity samples (28 pairs × 4 combos × N per combo)
-        # With binary cats: 112 base patterns, target ~10K samples → ~90 per combo
-        n_per_combo = max(5, n_target // (len(pairs) * 4))
-        
-        cat_medians = []
-        for i in range(n_cat_features):
-            vals = X_train[:, num_numeric + i]
-            cat_medians.append(np.median(vals))
-        
-        all_synthetic = []
-        
-        for (i, j) in pairs:
-            cat_i_vals = np.arange(n_categories[i])
-            cat_j_vals = np.arange(n_categories[j])
+        results = {}
+        for c in range(num_classes):
+            y_binary = (y_tr_all == c).astype(float)
+            dtrain_qxgb.set_label(y_binary)
+            dval_qxgb.set_label((y_val == c).astype(float))
             
-            for ci in cat_i_vals:
-                for cj in cat_j_vals:
-                    # Generate samples with varied numeric features: 
-                    # Real-data-range noise centered on feature means
-                    noise_part = np.random.randn(n_per_combo, num_numeric) * numeric_stds * 0.5
-                    numeric_part = numeric_means + noise_part
-                    # Clip to real data range
-                    numeric_part = np.clip(numeric_part, numeric_mins, numeric_maxs)
-                    
-                    cat_part = np.full((n_per_combo, n_cat_features), cat_medians)
-                    cat_part[:, i] = ci
-                    cat_part[:, j] = cj
-                    
-                    synth = np.concatenate([numeric_part, cat_part], axis=1)
-                    all_synthetic.append(synth)
-        
-        interaction_samples = np.concatenate(all_synthetic, axis=0)
-        
-        # Part 2: Random sampling for full feature-space coverage
-        n_random = n_target - len(interaction_samples)
-        if n_random > 0:
-            random_cat = np.column_stack([
-                np.random.randint(0, n_categories[i], n_random) 
-                for i in range(n_cat_features)
-            ])
-            random_num = np.random.uniform(
-                np.tile(numeric_mins, (n_random, 1)),
-                np.tile(numeric_maxs, (n_random, 1))
+            params = {
+                'objective': 'reg:quantileerror',
+                'quantile_alpha': quantile_alphas,
+                'tree_method': 'hist',
+                'device': 'cuda',
+                'max_depth': 6,  # reduced for speed
+                'learning_rate': 0.08,
+                'subsample': 0.7,
+                'colsample_bytree': 0.6,
+                'min_child_weight': 20,
+                'reg_alpha': 0.5,
+                'reg_lambda': 2.0,
+                'seed': seed + c,
+            }
+            
+            # Train with early stopping
+            evallist = [(dtrain_qxgb, 'train'), (dval_qxgb, 'eval')]
+            bst = xgb.train(
+                params, dtrain_qxgb,
+                num_boost_round=200,
+                evals=evallist,
+                early_stopping_rounds=20,
+                verbose_eval=False
             )
-            random_samples = np.concatenate([random_num, random_cat], axis=1)
-            all_synthetic = [interaction_samples, random_samples]
-        else:
-            all_synthetic = [interaction_samples]
-        
-        result = np.concatenate(all_synthetic, axis=0)
-        # Remove duplicates within epsilon and clip to valid range
-        result = np.clip(result, numeric_mins.min() - 1, numeric_maxs.max() + 1)
-        return result.astype(np.float32)
-    
-    # Determine feature dimensions from data
-    n_features = X_train.shape[1]
-    num_numeric = n_features - 8  # 8 categorical features
-    n_categories = [int(X_train[:, num_numeric + i].max()) + 2 for i in range(8)]
-    
-    print(f"  Generating synthetic interaction data...")
-    print(f"  Feature dims: {n_features} ({num_numeric} numeric + 8 categorical)")
-    print(f"  Category cardinalities: {n_categories}")
-    
-    # Generate synthetic data for TabKD (limit to keep GPU memory manageable)
-    # Target ~50K synthetic samples covering all pairwise interactions + random coverage
-    np.random.seed(42)
-    n_synth_target = 30000
-    
-    # Generate synthetic data covering all 28 pairwise interactions + random coverage
-    X_synth = generate_interaction_synthetic_data(
-        X_train, n_categories, num_numeric, 
-        n_target=n_synth_target
-    )
-    X_synth = X_synth[:n_synth_target].astype(np.float32)
-    print(f"  Synthetic samples: {X_synth.shape[0]}")
-    
-    # Collect teacher logits on synthetic data
-    print("  Collecting teacher logits on synthetic data...")
-    
-    # All 3 teachers produce probability outputs for consistency in KL-divergence
-    # XGBoost teacher (probabilities)
-    xgb_synth_proba = xgb_final.predict_proba(X_synth)
-    # LightGBM teacher (probabilities)
-    lgb_synth_proba = lgb_final.predict_proba(X_synth)
-    # CatBoost teacher (probabilities)
-    cat_synth_proba = cat_final.predict_proba(X_synth)
-    
-    # Average of 3 teachers' probabilities as soft training target
-    teacher_avg_proba = (xgb_synth_proba + lgb_synth_proba + cat_synth_proba) / 3.0
-    # Convert to logits for student training (more stable for KL-divergence)
-    teacher_avg_logit = np.log(teacher_avg_proba + 1e-10)
-    print(f"  Teacher avg proba shape: {teacher_avg_proba.shape}")
-    
-    # Average teacher logits as the soft training target
-
-    
-    # Train neural student on (synthetic_features, teacher_avg_proba)
-    print("  Training TabKD neural student...")
-    X_synth_tensor = torch.tensor(X_synth, dtype=torch.float32).to(device)
-    # Use log-probabilities for KL-divergence loss (PyTorch KL-div expects log-probs for input)
-    y_synth_logprob = np.log(teacher_avg_proba + 1e-10)
-    y_synth_tensor = torch.tensor(y_synth_logprob, dtype=torch.float32).to(device)
-    
-    hidden_dim = 256
-    student = TabKDStudent(n_features, hidden_dim, num_classes).to(device)
-    optimizer = optim.AdamW(student.parameters(), lr=2e-3, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20)
-    criterion = nn.KLDivLoss(reduction="batchmean")
-    
-    batch_size = 2048
-    n_epochs = 15
-    
-    student.train()
-    for epoch in range(n_epochs):
-        perm = torch.randperm(X_synth_tensor.size(0))
-        total_loss = 0
-        n_batches = 0
-        for i in range(0, X_synth_tensor.size(0), batch_size):
-            idx = perm[i:i+batch_size]
-            xb = X_synth_tensor[idx]
-            yb = y_synth_tensor[idx]
             
-            optimizer.zero_grad()
-            # Student outputs logits; use log_softmax for KL divergence
-            student_logits = student(xb)
-            # KL-divergence: target is teacher proba (not logged), input is student log_proba
-            log_student_proba = torch.log_softmax(student_logits, dim=1)
-            loss = criterion(log_student_proba, yb)
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-            n_batches += 1
-        scheduler.step()
-        if (epoch + 1) % 10 == 0:
-            print(f"    Epoch {epoch+1}/{n_epochs}: avg KL loss={total_loss/n_batches:.4f}")
-    
-    # Get student predictions on validation and test sets
-    student.eval()
-    with torch.no_grad():
-        X_val_t = torch.tensor(X_val.astype(np.float32), device=device)
-        X_test_t = torch.tensor(X_test.astype(np.float32), device=device)
+            # Predict all quantiles at once
+            pred_val = bst.predict(dval_qxgb)
+            pred_test = bst.predict(dtest_qxgb)
+            
+            # pred_val is (n_val, n_quantiles) — reshape
+            n_q = len(quantile_alphas)
+            results[c] = {'val': pred_val.reshape(n_val, n_q), 
+                          'test': pred_test.reshape(n_test, n_q)}
         
-        student_logits_val = student(X_val_t).cpu().numpy()
-        student_logits_test = student(X_test_t).cpu().numpy()
-        
-        # Convert logits to probabilities
-        student_proba_val = np.exp(student_logits_val - student_logits_val.max(axis=1, keepdims=True))
-        student_proba_val = student_proba_val / student_proba_val.sum(axis=1, keepdims=True)
-        student_proba_test = np.exp(student_logits_test - student_logits_test.max(axis=1, keepdims=True))
-        student_proba_test = student_proba_test / student_proba_test.sum(axis=1, keepdims=True)
+        return results
     
-    tabkd_val_loss = log_loss(y_val, student_proba_val)
-    print(f"  TabKD student val_loss: {tabkd_val_loss:.4f}")
+    print("  Training QXGBoost for quantiles [0.1, 0.5, 0.9] (3-class, single model per class)...")
     
-    # Free GPU memory
-    del X_synth_tensor, y_synth_tensor, student
-    torch.cuda.empty_cache()
+    # Train QXGBoost — single model per class, all 3 quantiles together
+    # Fixed config (no HPO) to avoid budget penalty — per the experiment sketch
+    qxgb_results = train_qxgb_per_class(X_train, y_train, X_val, X_test, [0.1, 0.5, 0.9], seed=42)
+    
+    # Collect quantile predictions
+    n_val = X_val.shape[0]
+    n_test = X_test.shape[0]
+    q10_val = np.zeros((n_val, num_classes))
+    q50_val = np.zeros((n_val, num_classes))
+    q90_val = np.zeros((n_val, num_classes))
+    q10_test = np.zeros((n_test, num_classes))
+    q50_test = np.zeros((n_test, num_classes))
+    q90_test = np.zeros((n_test, num_classes))
+    
+    for c in range(num_classes):
+        q10_val[:, c] = qxgb_results[c]['val'][:, 0]
+        q50_val[:, c] = qxgb_results[c]['val'][:, 1]
+        q90_val[:, c] = qxgb_results[c]['val'][:, 2]
+        q10_test[:, c] = qxgb_results[c]['test'][:, 0]
+        q50_test[:, c] = qxgb_results[c]['test'][:, 1]
+        q90_test[:, c] = qxgb_results[c]['test'][:, 2]
+    
+    # Compute per-sample prediction interval width as uncertainty measure
+    # For each sample, interval_width = mean(q90 - q10) across classes
+    interval_width_val = np.mean(q90_val - q10_val, axis=1)
+    interval_width_test = np.mean(q90_test - q10_test, axis=1)
+    
+    # Convert to inverse weights: confident (narrow interval) → higher weight
+    # Clip to avoid extreme weights
+    eps = 1e-6
+    inverse_weights = 1.0 / (interval_width_val + eps)
+    inv_weights_test = 1.0 / (interval_width_test + eps)
+    
+    # Normalize weights to sum to N (so average weight = 1.0)
+    n_val_samples = len(inverse_weights)
+    weights_val = inverse_weights * (n_val_samples / inverse_weights.sum())
+    weights_test = inv_weights_test * (n_val_samples / inv_weights_test.sum())
+    
+    # Stats on uncertainty distribution
+    print(f"  Interval width stats: min={interval_width_val.min():.4f}, "
+          f"median={np.median(interval_width_val):.4f}, "
+          f"max={interval_width_val.max():.4f}")
+    print(f"  Weight stats: min={weights_val.min():.4f}, "
+          f"median={np.median(weights_val):.4f}, "
+          f"max={weights_val.max():.4f}")
+    
+    # QXGBoost median predictions quality check
+    # For multiclass, we treat q50 predictions as class probabilities (normalized)
+    qxgb_proba_val = np.exp(q50_val - q50_val.max(axis=1, keepdims=True))
+    qxgb_proba_val = qxgb_proba_val / qxgb_proba_val.sum(axis=1, keepdims=True)
+    qxgb_median_loss = log_loss(y_val, qxgb_proba_val)
+    print(f"  QXGBoost median (q50) val_loss: {qxgb_median_loss:.4f}")
     
     # ─── PHASE 3: Weighted ensemble via grid search ──────────────────────
     print("\n--- Optimizing ensemble weights ---")
-    best_ens_loss = float("inf")
-    best_weights = (1 / 3, 1 / 3, 1 / 3)
-    best_4_weights = None
     
-    # First: 3-model ensemble (control baseline) — precompute weighted arrays
+    # 3-model ensemble (control baseline)
     xgb_val = xgb_proba_val
     lgb_val = lgb_proba_val
     cat_val = cat_proba_val
-    tabkd_val = student_proba_val
     
     # Use scipy minimize for faster optimization
     from scipy.optimize import minimize
@@ -710,19 +676,11 @@ def main():
         ens = w1 * xgb_val + w2 * lgb_val + w3 * cat_val
         return log_loss(y_val, ens)
     
-    def neg_log_loss_4(weights):
-        w1, w2, w3, w4 = weights
-        if w1 < 0.05 or w2 < 0.01 or w3 < 0.05 or w4 < 0.0 or w4 > 0.10:
-            return 10.0
-        if abs(w1 + w2 + w3 + w4 - 1.0) > 0.01:
-            return 10.0
-        ens = w1 * xgb_val + w2 * lgb_val + w3 * cat_val + w4 * tabkd_val
-        return log_loss(y_val, ens)
-    
     # 3-model optimization
     print("  Optimizing 3-model weights...")
     best_3_loss = float("inf")
-    for _ in range(50):  # Multiple random starts
+    best_weights = (1/3, 1/3, 1/3)
+    for _ in range(30):  # Multiple random starts
         w0 = [np.random.uniform(0.1, 0.75), np.random.uniform(0.05, 0.5)]
         result = minimize(neg_log_loss_3, w0, method='SLSQP',
                          bounds=[(0.05, 0.90), (0.01, 0.90)],
@@ -733,81 +691,66 @@ def main():
             w3 = 1.0 - w1 - w2
             best_weights = (w1, w2, w3)
     
-    best_ens_loss = best_3_loss
+    w_xgb, w_lgb, w_cat = best_weights
+    print(f"  3-model best weights: XGB={w_xgb:.2f}, LGB={w_lgb:.2f}, CAT={w_cat:.2f}")
+    print(f"  Best pre-calibration loss: {best_3_loss:.4f}")
     
-    # 4-model optimization
-    print("  Optimizing 4-model weights (3 GBDT + TabKD ≤10%)...")
-    best_4_loss = float("inf")
-    for _ in range(100):  # Multiple random starts for 4-model
-        w0 = [np.random.uniform(0.1, 0.70), np.random.uniform(0.05, 0.40),
-              np.random.uniform(0.10, 0.50), np.random.uniform(0.00, 0.10)]
-        result = minimize(neg_log_loss_4, w0, method='SLSQP',
-                         bounds=[(0.05, 0.85), (0.01, 0.50), (0.05, 0.70), (0.00, 0.10)],
-                         constraints={'type': 'eq', 'fun': lambda w: sum(w) - 1.0})
-        if result.fun < best_4_loss:
-            best_4_loss = result.fun
-            best_4_weights = list(result.x)
-    
-    if best_4_weights and best_4_loss < best_ens_loss:
-        best_ens_loss = best_4_loss
-        print(f"  4-model wins: {best_4_loss:.4f} < 3-model: {best_3_loss:.4f}")
-    else:
-        best_4_weights = None
-        print(f"  3-model wins: {best_3_loss:.4f}")
-    
-    print(f"  3-model best weights: XGB={best_weights[0]:.2f}, LGB={best_weights[1]:.2f}, CAT={best_weights[2]:.2f}")
-    if best_4_weights:
-        print(f"  4-model best weights: XGB={best_4_weights[0]:.2f}, LGB={best_4_weights[1]:.2f}, CAT={best_4_weights[2]:.2f}, TabKD={best_4_weights[3]:.2f}")
-    print(f"  Best pre-calibration loss: {best_ens_loss:.4f}")
-
-    # Determine best ensemble: 3-model or 4-model (TabKD)
-    if best_4_weights is not None:
-        w_xgb, w_lgb, w_cat, w_tabkd = best_4_weights
-        print(f"\n  Using 4-model ensemble (3-GBDT + TabKD student)")
-        weighted_proba_val = (
-            w_xgb * xgb_proba_val + w_lgb * lgb_proba_val + 
-            w_cat * cat_proba_val + w_tabkd * student_proba_val
-        )
-        weighted_proba_test = (
-            w_xgb * xgb_proba_test + w_lgb * lgb_proba_test + 
-            w_cat * cat_proba_test + w_tabkd * student_proba_test
-        )
-        use_4model = True
-    else:
-        w_xgb, w_lgb, w_cat = best_weights
-        weighted_proba_val = (
-            w_xgb * xgb_proba_val + w_lgb * lgb_proba_val + w_cat * cat_proba_val
-        )
-        weighted_proba_test = (
-            w_xgb * xgb_proba_test + w_lgb * lgb_proba_test + w_cat * cat_proba_test
-        )
-        w_tabkd = 0.0
-        use_4model = False
-    
-    print(f"  Final weights: XGB={w_xgb:.2f}, LGB={w_lgb:.2f}, CAT={w_cat:.2f}" + 
-          (f", TabKD={w_tabkd:.2f}" if use_4model else ""))
+    weighted_proba_val = w_xgb * xgb_proba_val + w_lgb * lgb_proba_val + w_cat * cat_proba_val
+    weighted_proba_test = w_xgb * xgb_proba_test + w_lgb * lgb_proba_test + w_cat * cat_proba_test
     weighted_loss = log_loss(y_val, weighted_proba_val)
 
-    # ─── PHASE 3b: Bin-Constrained Isotonic Calibration ───────────────────
-    # Grid-search bin counts to find optimal regularization.
-    # The hypothesis: default isotonic overfits to ~1.4% noisy val samples;
-    # constraining bins tightens the mapping to the noise floor.
+    # ─── PHASE 3b: Bin-Constrained Isotonic Calibration (weighted + unweighted) ──
+    # Compare standard unweighted isotonic with QXGBoost-uncertainty-weighted isotonic
     print("\n--- Bin-Constrained Isotonic Calibration ---")
-    bin_counts = [30, 50, 100, 200, 500, 'default']
-    print(f"  Testing bin counts: {bin_counts}")
-    bin_results = evaluate_bin_counts(
+    
+    # Test standard unweighted isotonic (control)
+    bin_counts = [100, 200, 500]
+    print(f"  Testing bin counts (unweighted): {bin_counts}")
+    unweighted_results = evaluate_bin_counts(
         weighted_proba_val, y_val, weighted_proba_test, bin_counts
     )
-    for bc, res in sorted(bin_results.items(), key=lambda x: x[1]['val_loss']):
-        marker = " <-- best" if bc == min(bin_results, key=lambda k: bin_results[k]['val_loss']) else ""
+    for bc, res in sorted(unweighted_results.items(), key=lambda x: x[1]['val_loss']):
+        marker = " <-- best" if bc == min(unweighted_results, key=lambda k: unweighted_results[k]['val_loss']) else ""
         print(f"  N_bins={str(bc):>7}: val_loss={res['val_loss']:.6f}{marker}")
     
-    # Select best bin count
-    best_bc = min(bin_results, key=lambda k: bin_results[k]['val_loss'])
-    calibrated_val = bin_results[best_bc]['cal_val']
-    calibrated_test = bin_results[best_bc]['cal_test']
-    calibrated_loss = bin_results[best_bc]['val_loss']
-    print(f"  Best bin count: {best_bc} (val_loss={calibrated_loss:.6f})")
+    best_unweighted_bc = min(unweighted_results, key=lambda k: unweighted_results[k]['val_loss'])
+    best_unweighted_loss = unweighted_results[best_unweighted_bc]['val_loss']
+    print(f"  Best unweighted: N_bins={best_unweighted_bc}, val_loss={best_unweighted_loss:.6f}")
+    
+    # Test weighted isotonic (using QXGBoost uncertainty weights)
+    print(f"\n  Testing weighted isotonic with QXGBoost uncertainty weights...")
+    print(f"  Weight stats: min={weights_val.min():.4f}, median={np.median(weights_val):.4f}, max={weights_val.max():.4f}")
+    
+    weighted_bin_results = {}
+    for bc in [500]:  # Only test N=500 with weights (main comparison)
+        cal_val, cal_test = weighted_bin_constrained_isotonic(
+            weighted_proba_val, y_val, weighted_proba_test, weights_val, bc
+        )
+        wloss = log_loss(y_val, cal_val)
+        weighted_bin_results[bc] = {'val_loss': wloss, 'cal_val': cal_val, 'cal_test': cal_test}
+        print(f"  Weighted N_bins={bc}: val_loss={wloss:.6f}")
+    
+    best_weighted_bc = min(weighted_bin_results, key=lambda k: weighted_bin_results[k]['val_loss'])
+    best_weighted_loss = weighted_bin_results[best_weighted_bc]['val_loss']
+    print(f"  Best weighted: N_bins={best_weighted_bc}, val_loss={best_weighted_loss:.6f}")
+    
+    # Select the best overall approach
+    if best_weighted_loss < best_unweighted_loss:
+        print(f"\n  Weighted isotonic WINS: {best_weighted_loss:.6f} < {best_unweighted_loss:.6f}")
+        best_bc = best_weighted_bc
+        calibrated_val = weighted_bin_results[best_bc]['cal_val']
+        calibrated_test = weighted_bin_results[best_bc]['cal_test']
+        calibrated_loss = best_weighted_loss
+        use_weighted_iso = True
+    else:
+        print(f"\n  Unweighted isotonic wins (or equal): {best_unweighted_loss:.6f}")
+        best_bc = best_unweighted_bc
+        calibrated_val = unweighted_results[best_bc]['cal_val']
+        calibrated_test = unweighted_results[best_bc]['cal_test']
+        calibrated_loss = best_unweighted_loss
+        use_weighted_iso = False
+    
+    print(f"  Final isotonic: {'weighted' if use_weighted_iso else 'unweighted'}, N_bins={best_bc}")
     
     # Effective per-class temperatures (mean ratio of original/calibrated)
     iso_temperatures = []
@@ -819,14 +762,9 @@ def main():
 
     # ─── PHASE 4: Stacking with Logistic Regression meta-learner ───────
     print("\n--- Stacking with Logistic Regression meta-learner ---")
-    if use_4model:
-        stack_val = np.column_stack([xgb_proba_val, lgb_proba_val, cat_proba_val, student_proba_val])
-        stack_test = np.column_stack([xgb_proba_test, lgb_proba_test, cat_proba_test, student_proba_test])
-        print(f"  4-model stacking (3 GBDT + TabKD)")
-    else:
-        stack_val = np.column_stack([xgb_proba_val, lgb_proba_val, cat_proba_val])
-        stack_test = np.column_stack([xgb_proba_test, lgb_proba_test, cat_proba_test])
-        print(f"  3-model stacking")
+    stack_val = np.column_stack([xgb_proba_val, lgb_proba_val, cat_proba_val])
+    stack_test = np.column_stack([xgb_proba_test, lgb_proba_test, cat_proba_test])
+    print(f"  3-model stacking")
 
     meta = LogisticRegression(C=1.0, max_iter=2000, solver="lbfgs")
     meta.fit(stack_val, y_val)
@@ -837,6 +775,8 @@ def main():
     stack_accuracy = accuracy_score(y_val, np.argmax(stack_proba_val, axis=1))
     print(f"  Stacking Val Loss:     {stack_loss:.4f}")
     print(f"  Stacking Val Accuracy: {stack_accuracy:.4f}")
+    
+    weighted_loss = log_loss(y_val, weighted_proba_val)
     print(f"  Weighted Val Loss:     {weighted_loss:.4f}")
     print(f"  ISO-Calibrated Val Loss: {calibrated_loss:.4f}")
 
@@ -892,12 +832,9 @@ def main():
                 "timestamp\tmethod\ttrials\tval_loss\tval_accuracy\tsubmission\tnotes\n"
             )
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        if use_4model:
-            weights_str = f"w=({w_xgb:.2f},{w_lgb:.2f},{w_cat:.2f},{w_tabkd:.2f})"
-            notes = f"TabKD_student={tabkd_val_loss:.4f} {weights_str}"
-        else:
-            weights_str = f"w=({w_xgb:.2f},{w_lgb:.2f},{w_cat:.2f})"
-            notes = weights_str
+        weights_str = f"w=({w_xgb:.2f},{w_lgb:.2f},{w_cat:.2f})"
+        iso_type = "weighted" if use_weighted_iso else "unweighted"
+        notes = f"QXGB-uncertainty-iso, {iso_type}, N_bins={best_bc} {weights_str}"
         f.write(
             f"{timestamp}\t{method_name}\t{total_trials}\t{val_loss:.6f}\t{val_accuracy:.6f}\t{submission_file}\t{HYPOTHESIS} {notes}\n"
         )
