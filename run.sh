@@ -19,6 +19,7 @@ FAST_MODE=${2:-""}
 
 STAGNATION_K=${STAGNATION_K:-3}
 RESEARCH_EVERY=${RESEARCH_EVERY:-10}
+COOLDOWN_SECS=${COOLDOWN_SECS:-1}
 MODEL=${MODEL:-"opencode-go/minimax-m2.7"}
 LOG_FILE=${LOG_FILE:-"agent_loop.log"}
 
@@ -31,6 +32,7 @@ echo "  Model:          $MODEL"
 echo "  Iterations:     $MAX_ITERATIONS"
 echo "  Stagnation K:   $STAGNATION_K"
 echo "  Research every: $RESEARCH_EVERY"
+echo "  Cooldown:       ${COOLDOWN_SECS}s"
 echo "  Log:            $LOG_FILE"
 echo "  Started:        $(date)"
 echo "=================================================="
@@ -72,8 +74,7 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
     echo "========== Iteration $i / $MAX_ITERATIONS  exp=$EXP_ID  [$(date '+%H:%M:%S')] ==========" | tee -a "$LOG_FILE"
 
     # ─── Deterministic stagnation + schedule check ────
-    STAGNATING=$(python harness/check_stagnation.py --k "$STAGNATION_K")
-    BEST=$(python harness/check_stagnation.py --print-best)
+    read STAGNATING BEST <<< "$(python harness/check_stagnation.py --k "$STAGNATION_K" --both)"
     SCHEDULED_RESEARCH=0
     if [ "$RESEARCH_EVERY" -gt 0 ] && [ $((i % RESEARCH_EVERY)) -eq 0 ]; then
         SCHEDULED_RESEARCH=1
@@ -123,8 +124,8 @@ Current best val_loss: $BEST" || echo "  [WARN] Experimenter exited non-zero"
 
     echo "--- Iteration $i complete  exp=$EXP_ID  [$(date '+%H:%M:%S')] ---" | tee -a "$LOG_FILE"
 
-    if [ -z "$FAST_MODE" ] && [ "$i" -lt "$MAX_ITERATIONS" ]; then
-        sleep 5
+    if [ -z "$FAST_MODE" ] && [ "$i" -lt "$MAX_ITERATIONS" ] && [ "$COOLDOWN_SECS" -gt 0 ]; then
+        sleep "$COOLDOWN_SECS"
     fi
 done
 

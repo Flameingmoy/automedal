@@ -71,9 +71,21 @@ def main():
         action="store_true",
         help="Print the current best val_loss instead of the stagnation flag",
     )
+    parser.add_argument(
+        "--both",
+        action="store_true",
+        help="Print '<0_or_1> <best_val_loss>' on one line",
+    )
     args = parser.parse_args()
 
     losses = _read_val_losses(RESULTS_FILE)
+
+    if args.both:
+        stag = "1" if is_stagnating(args.k, losses) else "0"
+        best = best_val_loss(losses)
+        best_str = f"{best:.6f}" if best != float("inf") else "inf"
+        print(f"{stag} {best_str}")
+        return
 
     if args.print_best:
         best = best_val_loss(losses)

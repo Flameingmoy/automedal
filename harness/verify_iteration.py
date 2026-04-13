@@ -42,11 +42,19 @@ QUEUE_MAX_PER_AXIS = 2
 
 # ─── parsing helpers ─────────────────────────────────────────────────────
 
+_file_cache = {}
+
+
 def _read_file(path):
+    if path in _file_cache:
+        return _file_cache[path]
     if not os.path.exists(path):
+        _file_cache[path] = None
         return None
     with open(path, encoding="utf-8") as f:
-        return f.read()
+        content = f.read()
+    _file_cache[path] = content
+    return content
 
 
 def _parse_knowledge_bullets(text):

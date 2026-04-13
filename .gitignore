@@ -22,6 +22,7 @@ playground-series-*/
 # Experiment logs & results
 agent/results.tsv
 agent_loop.log
+journal/.last_exp_id
 
 # Scout outputs (generated, not committed)
 scout/outputs/
@@ -32,3 +33,9 @@ results/
 queue/
 dev/
 catboost_info/
+
+# Claude Code local config
+.claude/
+
+# Graphify outputs for Claude Code
+graphify-out/
