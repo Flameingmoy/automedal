@@ -7,7 +7,7 @@
     - CoVar theory combines Maximum Confidence (MC) with Residual-Class Variance (RCV), where RCV measures how probability mass spreads across non-maximum classes — reliable pseudo-labels need both high MC and low RCV.
     - The influence of RCV grows as confidence grows, correcting overconfident-but-unstable predictions that fixed thresholds would accept as correct.
   Applicable idea: Applying CoVar-based pseudo-label selection (high MC + low RCV) on the 270K test rows instead of a fixed 0.95 confidence threshold may reduce val_loss because the current ensemble is systematically overconfident (temperatures ~0.94–0.95) and CoVar's variance criterion filters out the high-confidence-but-wrong predictions near class boundaries that a raw max-probability threshold would include.
-- Paper: "Self Adaptive Threshold Pseudo-labeling and Unreliable Sample Contrastive Loss for Semi-supervised Image Classification" (arxiv 2407.03596v1)
+- Paper: "Self Adaptive Threshold Pseudo-labeling and Unreliable Sample Contrastive Loss for Semi-supervised Image Classification" (arxiv 2407.03596v1) [consumed in exp 0024]
   Summary:
     - Fixed or ad-hoc pseudo-labeling thresholds produce inferior performance and slow convergence because they cannot adapt to the evolving model quality during self-training iterations.
     - Self-adaptive per-class thresholds dynamically adjust to increase the number of reliable pseudo-labeled samples without relying on a pre-defined global cutoff.
@@ -66,7 +66,7 @@
 ---
 
 ## exp 0002 · stagnation · query: "multiclass calibration tabular pseudo-label selection"
-- Paper: "Multiclass Local Calibration With the Jensen-Shannon Distance" (arxiv 2510.26566v1) [consumed in exp 0009]
+- Paper: "Multiclass Local Calibration With the Jensen-Shannon Distance" (arxiv 2510.26566v1) [consumed in exp 0025]
   Summary:
     - Standard multiclass calibration lacks a notion of distance among inputs, causing proximity bias: predictions in sparse feature-space regions are systematically miscalibrated
     - Uses Jensen-Shannon distance to weight calibration training samples by local neighborhood density rather than treating all samples equally
@@ -96,7 +96,7 @@
     - For multi-class problems, ROC-IR avoids sacrificing ranking quality for calibration quality — both improve simultaneously rather than trading off
   Applicable idea: Applying ROC-Regularized Isotonic Regression to the XGB+LGB+CatBoost ensemble probabilities (instead of per-class temperature scaling) may reduce log_loss because the ensemble's overconfidence (temperatures ~0.94–0.95) combined with the JSD proximity bias means IR alone could distort the ranking structure, and ROC-IR preserves both calibration and ranking quality simultaneously.
 
-- Paper: "Revisiting Self-Training with Regularized Pseudo-Labeling for Tabular Data" (arxiv 2302.14013v3)
+- Paper: "Revisiting Self-Training with Regularized Pseudo-Labeling for Tabular Data" (arxiv 2302.14013v3) [consumed in exp 0028]
   Summary:
     - Standard self-training methods (e.g., fixed confidence thresholds) are fragile on tabular data because gradient-boosting and neural classifiers behave differently on low-density regions versus high-density regions
     - Proposes a regularized pseudo-labeling approach tailored for tabular data, incorporating density-aware sample weighting and regularization on the student model's predictions
@@ -109,3 +109,46 @@
     - Focal loss, while not a proper loss, acts as an implicit regularizer that produces better-calibrated test predictions when used during training without any post-hoc calibration step
     - Establishes a formal connection: focal loss + temperature scaling is optimal (minimizes ECE) when the model's confidence overestimation follows a specific power-law pattern
   Applicable idea: Re-training XGBoost with focal loss as the objective (instead of standard log-loss) may reduce val_loss because the persistent XGB-heavy weight pattern (0.65/0.10/0.25) across 8+ experiments indicates XGBoost is the most overconfident ensemble member, and focal loss's implicit regularization specifically targets the overconfidence that causes the ensemble's log_loss to plateau at ~0.052.
+
+## exp 0009 · stagnation · query: "gradient boosting ensemble diversity feature bagging pseudo-labeling robust training"
+- Paper: "Robust-GBDT: GBDT with Nonconvex Loss for Tabular Classification in the Presence of Label Noise and Class Imbalance" (arxiv 2310.05067v2) [consumed in exp 0024]
+  Summary:
+    - Standard cross-entropy GBDTs overfit noisy labels because CE uniformly penalizes all misclassifications, including those in ambiguous regions.
+    - Robust Focal Loss (RFL) adapts the focusing parameter γ per sample based on local loss convexity — down-weighting samples in low-convexity (ambiguous) regions while preserving signal from clean, high-convexity regions.
+    - RFL integrates seamlessly with existing GBDT libraries (XGBoost/LightGBM/CatBoost) via custom objective; requires only the loss gradient and hessian, no architecture changes.
+    - Outperforms standard CE, standard focal loss, and other noise-robust methods on 10+ tabular datasets with injected label noise.
+  Applicable idea: Training CatBoost with Robust Focal Loss (RFL) as a 4th diverse ensemble member alongside standard-log-loss XGB+LGB+CAT may reduce val_loss because standard focal loss failed catastrophically in exp 0004 (avg sample weight 0.0015, collapsed XGB to 0.10 weight), but RFL's per-sample adaptive focusing preserves training signal while producing fundamentally different error patterns than CE-trained models — giving the ensemble a complementary member that CatBoost's CE-trained self cannot provide.
+- Paper: "Team up GBDTs and DNNs: Advancing Efficient and Effective Tabular Prediction with Tree-hybrid MLPs" (arxiv 2407.09790v1) [consumed in exp 0023]
+  Summary:
+    - Observes that DNNs and GBDTs dominate different tabular datasets because they capture different function classes — DNNs learn smooth continuous mappings, GBDTs learn axis-aligned piecewise-constant rules.
+    - Proposes T-MLP: a simple MLP whose first-layer weights are initialized by a GBDT's entropy-driven feature importance scores, effectively converting tree splits into learned linear projections.
+    - T-MLP is trained with standard backpropagation on the GBDT-initialized weights, achieving competitive performance with GBDTs on GBDT-friendly datasets and with DNNs on DNN-friendly datasets.
+    - The GBDT feature gate provides a principled inductive bias for tabular DL without requiring the full GBDT at inference time.
+  Applicable idea: Training a T-MLP (GBDT-feature-gated MLP) as a 4th ensemble member alongside persisted XGB+LGB+CatBoost configs may reduce val_loss because the GBDT-initialized MLP has a fundamentally different inductive bias from all three GBDTs (continuous smooth functions vs axis-aligned trees), breaking the persistent XGB-heavy weight pattern (0.65/0.10/0.25) that indicates the three GBDTs are producing correlated errors — and T-MLP's competitive individual accuracy avoids the TabR failure mode (0.0688 individual) that caused exp 0008 to regress.
+- Paper: "How Ensemble Learning Balances Accuracy and Overfitting: A Bias-Variance Perspective on Tabular Data" (arxiv 2512.05469v1) [consumed in exp 0025]
+  Summary:
+    - On tabular datasets with nonlinear structure, tree-based ensembles improve test accuracy by 5–7 points while keeping generalization gaps below 3%, primarily by reducing variance through averaging or controlled boosting.
+    - On noisy or highly imbalanced tabular datasets, ensembles require stronger regularization to avoid fitting noise or majority-class patterns; isotonic calibration may overfit noisy samples in the tail of the probability distribution.
+    - Dataset complexity indicators (linearity score, Fisher ratio, noise estimate) predict when ensembles will control overfitting effectively — noisy, high-dimensional data needs stronger regularization.
+    - Suggests that the optimal ensemble strategy depends on the data's noise profile: clean data favors averaging, noisy data favors regularized diversity.
+  Applicable idea: Re-tuning isotonic calibration's number of bins (currently using default sklearn IsotonicRegression) based on the ensemble's sensitivity to the noise floor may reduce val_loss because exp 0005's isotonic calibration plateau (0.0514 best) may reflect isotonic overfitting on noisy validation samples, and constraining the isotonic mapping to fewer bins (e.g., 50–100) would regularize the calibration curve against fitting noise — especially relevant since the dataset is 98.6% accurate and the ~1.4% noise level is non-negligible for calibration.
+
+## exp 0010 · stagnation · query: "isotonic calibration multiclass normalization tabular knowledge distillation interaction diversity warm-start HPO"
+- Paper: "Improving Multi-Class Calibration through Normalization-Aware Isotonic Techniques" (arxiv 2512.09054v1) [consumed in exp 0027]
+  Summary:
+    - Standard one-vs-rest isotonic regression for multiclass calibration ignores probability normalization constraints, producing suboptimal log-loss because the per-class isotonic mappings can independently shift class probabilities in ways that violate the sum-to-one property.
+    - NA-FIR incorporates normalization directly into the isotonic optimization objective, while SCIR models the problem as cumulative bivariate isotonic regression — both enforce that calibrated probabilities sum to one across classes.
+    - Across text and image classification benchmarks, normalization-aware isotonic methods consistently improve NLL and ECE over both plain isotonic regression and parametric methods like temperature scaling.
+  Applicable idea: Applying normalization-aware isotonic calibration (NA-FIR or SCIR) to the XGB+LGB+CatBoost ensemble's softmax outputs may reduce val_loss below 0.051357 because the current isotonic plateau likely reflects the one-vs-rest approach's inability to enforce sum-to-one normalization across classes, and the ~0.0010 isotonic improvement over weighted ensemble in exp 0017 suggests there is still room for a more principled multiclass calibration method to squeeze out additional log-loss reduction.
+- Paper: "TabKD: Tabular Knowledge Distillation through Interaction Diversity of Learned Feature Bins" (arxiv 2603.15481v1)
+  Summary:
+    - Standard knowledge distillation fails on tabular data because tabular models encode predictive knowledge through feature interactions, not just final logits — existing KD methods ignore these interaction patterns.
+    - TabKD learns adaptive feature bins aligned with teacher decision boundaries, then generates synthetic queries that maximize pairwise interaction coverage, ensuring the student captures the full diversity of the teacher's feature interactions.
+    - Across 4 benchmark datasets and 4 teacher architectures, TabKD achieves highest student-teacher agreement in 14/16 configurations, validating that interaction coverage correlates strongly with distillation quality.
+  Applicable idea: Training a neural network student model on XGB+LGB+CatBoost ensemble predictions using TabKD's interaction-diversity approach (rather than standard KL-divergence logit matching) may reduce val_loss because TabR's failure (exp 0008, 0.0688 individual) was due to the student lacking the teacher's interaction-level knowledge — TabKD's synthetic data generation with pairwise interaction coverage would produce a genuinely diverse student without the time-budget penalty of a 4th model HPO run, and interaction diversity may produce the ensemble diversity the 3 GBDTs have failed to achieve.
+- Paper: "Are encoders able to learn landmarkers for warm-starting of Hyperparameter Optimization" (arxiv 2507.12604v1) [consumed in exp 0026]
+  Summary:
+    - Warm-starting Bayesian HPO across heterogeneous tabular datasets requires dataset representations that capture landmarker properties, which standard universal embeddings fail to do.
+    - Two proposed encoders — deep metric learning and landmarker reconstruction — both learn representations aligned with landmarker characteristics, though the translation to actual HPO warm-start gains was modest in experiments.
+    - The core insight is that Optuna trial histories from prior experiments can serve as landmarkers: a meta-model trained on (dataset-features, HPO-trial-metadata) → best-hyperparams provides a strong prior for new HPO runs on the same dataset.
+  Applicable idea: Using Optuna trial histories from the 20+ prior experiments (which span a wide range of hyperparameter configurations and their val_losses) as a warm-start prior for the next HPO run may reduce val_loss because the current approach of fresh random starts wastes information from failed trials — a meta-learner on prior trial histories could bias Optuna toward regions that produced strong val_losses on this specific dataset, compensating for the reduced trial counts that any future experiment must accept due to the 10-minute budget.

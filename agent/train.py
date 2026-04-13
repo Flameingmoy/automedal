@@ -69,7 +69,7 @@ GPU_ID = 0
 
 # ─── HYPOTHESIS ──────────────────────────────────────────────────────────
 # Agent: write your hypothesis for this experiment here before running.
-HYPOTHESIS = "ROC-regularized isotonic regression (ROC-IR) applied to the weighted ensemble's softmax outputs will improve log_loss because temperature scaling from exp 0002 confirmed overconfidence (temperatures ~0.94–0.95, +0.0002 signal) but the coarse grid implementation burned Optuna budget; ROC-IR is O(1) to fit and preserves multiclass ranking quality simultaneously — both calibration and ranking improve rather than trading off."
+HYPOTHESIS = "Constraining isotonic regression to 50–200 bins (informed by Fisher ratio and ~1.4% estimated noise level) will improve generalization vs default sklearn isotonic because exp 0017's best result (0.051357) likely reflects isotonic overfitting on noisy validation samples — the dataset is 98.6% accurate, meaning ~1.4% of samples are mislabeled, and unconstrained isotonic regression fits these noisy points exactly, distorting the calibration mapping for clean samples; regularizing the bin count tightens the piecewise-constant mapping to the noise floor without sacrificing the ~0.0010 improvement that makes isotonic the dominant post-processing step."
 # ────────────────────────────────────────────────────────────────────────
 
 
@@ -118,6 +118,89 @@ def generate_submission(preds, X_test, class_names, tag):
     sub_df.to_csv(filepath, index=False)
     print(f"  Submission saved: {filepath}")
     return filename
+
+
+# ─── BIN-CONSTRAINED ISOTONIC CALIBRATION ───────────────────────────────
+# Custom isotonic regression with explicit bin control to prevent overfitting
+# on noisy validation samples (~1.4% estimated noise from 98.6% accuracy).
+
+def bin_constrained_isotonic(proba_val, y_val, proba_test, n_bins):
+    """
+    Apply bin-constrained isotonic calibration per class.
+    
+    For each class c:
+    1. Sort val samples by predicted probability of class c.
+    2. Partition into n_bins equal-frequency bins.
+    3. Assign each bin the mean of true labels (binary: 1 if class c, 0 otherwise).
+    4. Apply piecewise-constant mapping to test predictions.
+    
+    This regularizes the piecewise-constant mapping against fitting noise,
+    unlike sklearn's IsotonicRegression which can create an arbitrary number
+    of bins equal to unique input values.
+    """
+    num_classes = proba_val.shape[1]
+    calibrated_val = np.zeros_like(proba_val)
+    calibrated_test = np.zeros_like(proba_test)
+    
+    for c in range(num_classes):
+        p_val = proba_val[:, c]
+        y_binary = (y_val == c).astype(float)
+        p_test = proba_test[:, c]
+        
+        # Sort by predicted probability
+        sort_idx = np.argsort(p_val)
+        sorted_p = p_val[sort_idx]
+        sorted_y = y_binary[sort_idx]
+        n = len(p_val)
+        
+        if n_bins == 'default':
+            # Use sklearn default (unconstrained)
+            iso = IsotonicRegression(out_of_bounds='clip')
+            iso.fit(p_val, y_binary)
+            calibrated_val[:, c] = iso.predict(p_val)
+            calibrated_test[:, c] = iso.predict(p_test)
+        else:
+            # Custom bin-constrained: equal-frequency bins
+            bin_size = n // n_bins
+            bin_means = []
+            bin_edges = []  # right edge of each bin
+            
+            for b in range(n_bins):
+                start = b * bin_size
+                if b == n_bins - 1:
+                    end = n  # last bin takes remainder
+                else:
+                    end = (b + 1) * bin_size
+                bin_y = sorted_y[start:end]
+                bin_p = sorted_p[start:end]
+                mean_y = np.mean(bin_y)
+                mean_p = np.mean(bin_p) if len(bin_p) > 0 else bin_p[0] if len(bin_p) > 0 else 0.5
+                bin_means.append(mean_y)
+                bin_edges.append(bin_p[-1] if len(bin_p) > 0 else mean_p)
+            
+            # Apply mapping to validation: for each sample, find its bin and assign bin mean
+            # Use digitize to find which bin each probability falls into
+            bin_edges_arr = np.array(bin_edges)
+            bin_indices = np.digitize(p_val, bin_edges_arr, right=False)
+            bin_indices = np.clip(bin_indices, 0, n_bins - 1)
+            calibrated_val[:, c] = np.array(bin_means)[bin_indices]
+            
+            # Apply mapping to test: same approach
+            bin_indices_test = np.digitize(p_test, bin_edges_arr, right=False)
+            bin_indices_test = np.clip(bin_indices_test, 0, n_bins - 1)
+            calibrated_test[:, c] = np.array(bin_means)[bin_indices_test]
+    
+    return calibrated_val, calibrated_test
+
+
+def evaluate_bin_counts(proba_val, y_val, proba_test, bin_counts):
+    """Evaluate all bin counts and return the best one + all results."""
+    results = {}
+    for bc in bin_counts:
+        cal_val, cal_test = bin_constrained_isotonic(proba_val, y_val, proba_test, bc)
+        loss = log_loss(y_val, cal_val)
+        results[bc] = {'val_loss': loss, 'cal_val': cal_val, 'cal_test': cal_test}
+    return results
 
 
 # ─── GPU-OPTIMIZED MODEL BUILDERS ───────────────────────────────────────
@@ -417,25 +500,33 @@ def main():
     )
     weighted_loss = log_loss(y_val, weighted_proba_val)
 
-    # ─── PHASE 3b: ROC-IR isotonic calibration ───────────────────────────
-    # Per-class isotonic regression on the weighted ensemble probabilities.
-    # Fits on val set (separate holdout), applies to test. O(1) — zero Optuna cost.
-    # ROC-IR preserves ranking within each class, unlike naive IR which can distort order.
-    print("\n--- ROC-IR Isotonic Calibration ---")
-    calibrated_val = np.zeros_like(weighted_proba_val)
-    calibrated_test = np.zeros_like(weighted_proba_test)
+    # ─── PHASE 3b: Bin-Constrained Isotonic Calibration ───────────────────
+    # Grid-search bin counts to find optimal regularization.
+    # The hypothesis: default isotonic overfits to ~1.4% noisy val samples;
+    # constraining bins tightens the mapping to the noise floor.
+    print("\n--- Bin-Constrained Isotonic Calibration ---")
+    bin_counts = [30, 50, 100, 200, 500, 'default']
+    print(f"  Testing bin counts: {bin_counts}")
+    bin_results = evaluate_bin_counts(
+        weighted_proba_val, y_val, weighted_proba_test, bin_counts
+    )
+    for bc, res in sorted(bin_results.items(), key=lambda x: x[1]['val_loss']):
+        marker = " <-- best" if bc == min(bin_results, key=lambda k: bin_results[k]['val_loss']) else ""
+        print(f"  N_bins={str(bc):>7}: val_loss={res['val_loss']:.6f}{marker}")
+    
+    # Select best bin count
+    best_bc = min(bin_results, key=lambda k: bin_results[k]['val_loss'])
+    calibrated_val = bin_results[best_bc]['cal_val']
+    calibrated_test = bin_results[best_bc]['cal_test']
+    calibrated_loss = bin_results[best_bc]['val_loss']
+    print(f"  Best bin count: {best_bc} (val_loss={calibrated_loss:.6f})")
+    
+    # Effective per-class temperatures (mean ratio of original/calibrated)
     iso_temperatures = []
     for c in range(num_classes):
-        iso = IsotonicRegression(out_of_bounds="clip")
-        iso.fit(weighted_proba_val[:, c], (y_val == c).astype(float))
-        calibrated_val[:, c] = iso.predict(weighted_proba_val[:, c])
-        calibrated_test[:, c] = iso.predict(weighted_proba_test[:, c])
-        # Store effective temperature as ratio of mean original vs mean calibrated
         orig_mean = weighted_proba_val[:, c].mean()
         cal_mean = calibrated_val[:, c].mean()
         iso_temperatures.append(orig_mean / (cal_mean + 1e-10))
-    calibrated_loss = log_loss(y_val, calibrated_val)
-    print(f"  Isotonic calibration val loss: {calibrated_loss:.4f}")
     print(f"  Effective per-class temperatures: {[f'{t:.4f}' for t in iso_temperatures]}")
 
     # ─── PHASE 4: Stacking with Logistic Regression meta-learner ───────
