@@ -16,6 +16,7 @@ wheels/
 data/*.csv
 data/*.npy
 data/*.json
+data/*.pkl
 submissions/*.csv
 playground-series-*/
 
