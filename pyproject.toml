@@ -53,6 +53,29 @@ automl = [
 research = [
     "arxiv>=2.1",
 ]
+# Observation dashboard (./am tui)
+tui = [
+    "textual>=0.80",
+    "rich-pixels>=3.0",
+    "textual-plotext>=1.0",
+    "watchdog>=4.0",
+    "pillow>=10",
+]
+# Optional GPU telemetry for the TUI (nvidia-smi fallback still used if omitted)
+tui-gpu = [
+    "pynvml>=11",
+]
+# Test runner
+test = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+automedal-tui = "tui.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
 
 [tool.uv.sources]
 torch = [

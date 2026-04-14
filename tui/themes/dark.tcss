@@ -1,0 +1,61 @@
+/* dark.tcss — default theme for AutoMedal TUI */
+
+Screen {
+    background: #0F111A;
+    color: #E1E4E8;
+}
+
+Header {
+    background: #161924;
+    color: #8BE9FD;
+}
+
+Footer {
+    background: #161924;
+    color: #6272A4;
+}
+
+#top-row {
+    height: auto;
+    layout: horizontal;
+}
+
+#middle-row {
+    height: auto;
+    layout: horizontal;
+}
+
+#top-row > SpritePanel {
+    width: 22;
+    border: round #6272A4;
+}
+
+#top-row > MetricChart {
+    width: 1fr;
+}
+
+#top-row > Leaderboard {
+    width: 34;
+}
+
+#middle-row > ExperimentLog {
+    width: 1fr;
+    height: 14;
+    border: round #6272A4;
+}
+
+#middle-row > #right-stack {
+    width: 44;
+    height: auto;
+    layout: vertical;
+}
+
+#right-stack > CurrentExperiment,
+#right-stack > GpuStats,
+#right-stack > SessionStats {
+    height: auto;
+}
+
+LiveStream {
+    border: round #6272A4;
+}

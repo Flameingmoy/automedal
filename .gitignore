@@ -36,6 +36,9 @@ queue/
 dev/
 catboost_info/
 
+# TUI local state (generated sprites, saved stream buffers)
+.automedal/
+
 # Claude Code local config
 .claude/
 
