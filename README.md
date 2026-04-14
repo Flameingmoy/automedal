@@ -10,6 +10,7 @@
 <p align="center">
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#how-it-works">How It Works</a> &bull;
+  <a href="#live-dashboard-am-tui">Dashboard</a> &bull;
   <a href="#providers">Providers</a> &bull;
   <a href="#configuration">Configuration</a> &bull;
   <a href="#troubleshooting">Troubleshooting</a>
@@ -126,6 +127,22 @@ All commands go through the `./am` wrapper:
 | `./am run [N]` | Start the three-phase loop (default 50 iterations) |
 | `./am status` | Health check: knowledge, results, latest experiment tags |
 | `./am clean` | Wipe memory files + results (prompts to confirm) |
+| `./am tui [--demo]` | Live observation dashboard (tails `agent_loop.log`) |
+
+## Live Dashboard (`./am tui`)
+
+A read-only [Textual](https://textual.textualize.io) TUI for watching an overnight run at a glance. Run it in a second pane while `./am run` does its thing:
+
+```bash
+./am tui            # attach to the live agent_loop.log
+./am tui --demo     # replay a fixture log — no live run required
+```
+
+The dashboard tails `agent_loop.log`, `journal/NNNN-*.md`, `agent/results.tsv`, and the memory files, and reduces them through a pure phase state machine (`RESEARCH → CODING → EXPERIMENT → SUBMITTING → IDLE → FROZEN`). No harness changes — if you never launch the TUI, nothing changes.
+
+Panels: phase sprite, val_loss sparkline, top-5 leaderboard with medals, scrollable experiment log, current-experiment card (hypothesis + budget bar + live loss), GPU util/VRAM/temp, session totals, and a phase-colored live log stream. `ctrl+o` flips to a full-screen raw stream.
+
+Optional install: `uv sync --extra tui`. Generated placeholder sprites live in `~/.automedal/sprites/`; drop real PNGs into the same path to replace them.
 
 ## Providers
 
@@ -204,6 +221,18 @@ configs/competition.yaml Single source of truth for the active competition
 templates/               Jinja2 templates (AGENTS.md.j2, program.md.j2, prepare_starter.py.j2)
 data/                    Competition inputs: raw CSVs + .npy arrays (untracked)
 submissions/             Kaggle-ready CSVs (auto-generated on improvement, untracked)
+
+tui/                     Textual observation dashboard (optional, `--extra tui`)
+├── app.py               Composition: sources → bus → state reducer → widgets
+├── state.py             Pure PhaseMachine.reduce((state, event)) -> state
+├── events.py            Event dataclasses shared across sources and widgets
+├── sources/             Async producers: log_tail, journal, results, memory, gpu, demo
+├── widgets/             Textual widgets (sprite, metric, leaderboard, experiments, ...)
+├── screens/             Dashboard and raw-stream screens
+├── themes/              Palette + Textual CSS (dark.tcss)
+└── sprite_loader.py     Pillow-generated sprites with ASCII fallback
+
+tests/                   pytest suite (phase machine, log parser, sprite loader)
 ```
 
 ## Available Libraries

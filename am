@@ -179,6 +179,10 @@ print('  providers configured:', ', '.join(d.keys()) if d else '(empty)')
     bash run.sh "${1:-50}"
     ;;
 
+  tui)
+    uv run --extra tui python -m tui "$@"
+    ;;
+
   status)
     echo "── knowledge.md (head) ──"
     if [ -f knowledge.md ]; then
@@ -228,6 +232,9 @@ Loop:
   ./am run [N]               start the three-phase loop (default 50)
   ./am status                quick health check (knowledge + last results)
   ./am clean                 wipe memory files + results.tsv (confirms first)
+
+Monitor:
+  ./am tui [--demo]          live dashboard tailing agent_loop.log
 
 Env vars honored by ./am run:
   MODEL              agent model slug, default opencode-go/minimax-m2.7
