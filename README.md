@@ -155,6 +155,7 @@ MODEL="openrouter/free-model" ./am run 50
 | `STAGNATION_K` | `3` | Trigger Researcher + Strategist after K non-improving runs |
 | `RESEARCH_EVERY` | `10` | Scheduled Researcher cadence (set `0` to disable) |
 | `COOLDOWN_SECS` | `1` | Seconds to pause between iterations (0 to disable) |
+| `TRAIN_BUDGET_MINUTES` | `10` | Training wall-clock limit per experiment (minutes) |
 | `LOG_FILE` | `agent_loop.log` | Path for the combined loop log |
 
 ```bash

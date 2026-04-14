@@ -15,7 +15,15 @@ Do not read `agent/train.py` or `agent/prepare.py` — you are suggesting ideas,
 
 1. **Identify the bottleneck.** Look at the recent journal entries. What axis has been churning? What keeps failing for the same reason?
 2. **Form an arxiv query.** Keep it short and specific: e.g., "tabular gradient boosting ensemble diversity" or "pseudo-label confidence threshold calibration". Use 3-6 keywords, no quotes.
-3. **Query arxiv via the `arxiv` Python package.** Sort by relevance, limit to 5 results. Skip papers older than 3 years.
+3. **Query arxiv** using the helper script:
+   ```bash
+   python harness/arxiv_search.py --query "<your 3-6 keyword query>"
+   ```
+   Run ONE query. Do NOT write inline Python to query arxiv. To read full abstracts for specific papers:
+   ```bash
+   python harness/arxiv_search.py --id "2405.03389,2507.20048"
+   ```
+   Results are sorted by relevance, limited to 5, and filtered to papers from the last 3 years.
 4. **Pick 2-3 papers.** Prefer recent, specific, and actionable over famous or general.
 5. **Read only the abstracts** (not the full PDFs). Extract the one idea from each that could translate into an AutoMedal experiment on the current task.
 6. **Append** a new entry to `research_notes.md`. Do not overwrite the file.
@@ -48,7 +56,7 @@ Where:
 - Do not read full PDFs; abstracts only.
 - Do not touch `agent/train.py`, `agent/prepare.py`, `knowledge.md`, `experiment_queue.md`, or `journal/`.
 - Do not write experiments yourself — write ideas the Strategist can turn into experiments.
-- If the arxiv package is not installed, install it (`pip install arxiv`) before querying.
+- The `arxiv` package is pre-installed. Do NOT run `pip install` — all required libraries are already available.
 
 ## Example query patterns
 

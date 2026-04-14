@@ -81,6 +81,8 @@ Hard rules:
 - Do not create new files outside `knowledge.md` and `experiment_queue.md` (plus the `[consumed ...]` edit to `research_notes.md`)
 - Do not write experiments that duplicate past failures already in the KB
 - Do not write vague hypotheses like "tune more" or "try a different model" — name the model, the parameter, or the transformation
+- Do not queue experiments requiring packages listed in AGENTS.md "Packages Known to Be Unavailable". If a research note references a novel library, check AGENTS.md before queuing.
+- Do not write Sketches that would consume more than 60 seconds of training budget on non-HPO code. The dominant regression cause is Optuna trial count collapse from auxiliary code consuming budget.
 
 ## When you are done
 

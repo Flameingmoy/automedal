@@ -55,7 +55,7 @@ SUB_ID_COL = _sub["id_col"]
 SUB_TARGET_COL = _sub["target_col"]
 
 # ─── HARD CONSTRAINTS ───────────────────────────────────────────────────
-TIME_BUDGET_MINUTES = 10
+TIME_BUDGET_MINUTES = int(os.environ.get("TRAIN_BUDGET_MINUTES", "10"))
 DATA_DIR = os.path.join(_REPO_ROOT, "data")
 SUBMISSION_DIR = os.path.join(_REPO_ROOT, "submissions")
 # ────────────────────────────────────────────────────────────────────────

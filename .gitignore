@@ -23,6 +23,7 @@ playground-series-*/
 agent/results.tsv
 agent_loop.log
 journal/.last_exp_id
+harness/.last_training_output
 
 # Scout outputs (generated, not committed)
 scout/outputs/

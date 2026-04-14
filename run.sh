@@ -20,6 +20,8 @@ FAST_MODE=${2:-""}
 STAGNATION_K=${STAGNATION_K:-3}
 RESEARCH_EVERY=${RESEARCH_EVERY:-10}
 COOLDOWN_SECS=${COOLDOWN_SECS:-1}
+TRAIN_BUDGET_MINUTES=${TRAIN_BUDGET_MINUTES:-10}
+export TRAIN_BUDGET_MINUTES
 MODEL=${MODEL:-"opencode-go/minimax-m2.7"}
 LOG_FILE=${LOG_FILE:-"agent_loop.log"}
 
@@ -33,6 +35,7 @@ echo "  Iterations:     $MAX_ITERATIONS"
 echo "  Stagnation K:   $STAGNATION_K"
 echo "  Research every: $RESEARCH_EVERY"
 echo "  Cooldown:       ${COOLDOWN_SECS}s"
+echo "  Train budget:   ${TRAIN_BUDGET_MINUTES}m"
 echo "  Log:            $LOG_FILE"
 echo "  Started:        $(date)"
 echo "=================================================="
@@ -115,10 +118,35 @@ Pending queue entries: $QUEUE_PENDING" || echo "  [WARN] Strategist exited non-z
         git tag "exp/$EXP_ID" HEAD 2>&1 | tee -a "$LOG_FILE" || true
     fi
 
-    # ─── Experimenter phase (always) ────
-    echo "  [harness] dispatching Experimenter" | tee -a "$LOG_FILE"
-    run_agent "experimenter" "prompts/experimenter.md" "Experiment ID: $EXP_ID
-Current best val_loss: $BEST" || echo "  [WARN] Experimenter exited non-zero"
+    # ─── Experimenter: Edit phase (agent edits code) ────
+    echo "  [harness] dispatching Experimenter (edit)" | tee -a "$LOG_FILE"
+    run_agent "experimenter-edit" "prompts/experimenter.md" "Experiment ID: $EXP_ID
+Current best val_loss: $BEST" || echo "  [WARN] Experimenter-edit exited non-zero"
+
+    # ─── Experimenter: Training (harness-managed, no agent) ────
+    TRAIN_TIMEOUT=$(( TRAIN_BUDGET_MINUTES * 60 + 30 ))
+    TRAIN_OUTPUT="harness/.last_training_output"
+    echo "  [harness] running training (budget=${TRAIN_BUDGET_MINUTES}m, timeout=${TRAIN_TIMEOUT}s)..." | tee -a "$LOG_FILE"
+
+    # Run prepare.py if it was modified
+    if ! git diff --quiet -- agent/prepare.py 2>/dev/null; then
+        echo "  [harness] prepare.py changed — running prepare first" | tee -a "$LOG_FILE"
+        python agent/prepare.py 2>&1 | tee -a "$LOG_FILE" || true
+    fi
+
+    timeout --signal=TERM "$TRAIN_TIMEOUT" python agent/train.py 2>&1 | tee "$TRAIN_OUTPUT" | tee -a "$LOG_FILE"
+    TRAIN_EXIT=${PIPESTATUS[0]}
+
+    # Extract result
+    FINAL_LOSS=$(grep -oP 'final_val_loss=\K[0-9.]+' "$TRAIN_OUTPUT" 2>/dev/null || echo "nan")
+    echo "  [harness] training done: val_loss=$FINAL_LOSS exit=$TRAIN_EXIT" | tee -a "$LOG_FILE"
+
+    # ─── Experimenter: Eval phase (agent writes journal, commits/reverts) ────
+    echo "  [harness] dispatching Experimenter (eval)" | tee -a "$LOG_FILE"
+    run_agent "experimenter-eval" "prompts/experimenter_eval.md" "Experiment ID: $EXP_ID
+Current best val_loss: $BEST
+Training exit code: $TRAIN_EXIT
+Training val_loss: $FINAL_LOSS" || echo "  [WARN] Experimenter-eval exited non-zero"
 
     python harness/verify_iteration.py --phase experimenter --exp-id "$EXP_ID" 2>&1 | tee -a "$LOG_FILE" || true
 
