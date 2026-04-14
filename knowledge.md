@@ -1,68 +1,56 @@
 # AutoMedal Knowledge Base
-_Last curated: exp 0015_
+_Last curated: exp 0023_
 
 ## Models
-- 3-model GPU ensemble (XGBoost + LightGBM + CatBoost) with 500-bin isotonic calibration is the dominant architecture; best val_loss **0.051087** at w=(0.65, 0.10, 0.25) + ISO-500 (exp 0010)
-- XGB-heavy weights (0.55–0.65 XGB, 0.10 LGB, 0.25–0.35 CatBoost) are the most reliable pattern across 15+ experiments; the persistent pattern reflects genuine XGBoost quality superiority, not grid-search overfitting (exps 0001–0015)
-- XGB+CAT is the most complementary pair (0.0524) vs XGB+LGB (0.0528) or LGB+CAT (0.0534) — XGB and CatBoost make more diverse errors than either pair with LGB (exp 0007)
-- LightGBM GPU hard-caps `max_bin` at 255; achieves ~0.0550 individually, receiving only ~0.10 ensemble weight (exps 0001–0015)
-- CatBoost achieves ~0.0536–0.0540 individually, receiving ~0.25 ensemble weight; sensitive to redundant features — frequency encoding degraded it to 0.0555 in exp 0014 (exps 0001–0015)
-- CatBoost with native `cat_features=...` (ordered target statistics) performed worse than ordinal encoding by +0.0009 (exp 0011)
+- 3-model GPU ensemble (XGBoost + LightGBM + CatBoost) with 500-bin isotonic calibration is the dominant architecture; best val_loss **0.050500** at w=(0.82, 0.01, 0.17) + ISO-500 (exp 0017); the improvement over prior runs came from XGB base quality (0.0522 individually)
+- XGB-heavy weights (0.55–0.92 XGB, 0.01–0.10 LGB, 0.06–0.35 CatBoost) are the most reliable pattern across 23+ experiments; scipy.optimize SLSQP continuously finds more XGB-heavy corners than the 0.05-increment grid; confirmed as theoretically optimal by UTD (exp 0020)
+- QXGBoost quantile regression is fundamentally misaligned with multiclass classification uncertainty — q50 val_loss=0.7028 (near-random); interval widths provide near-zero discriminative power; **QXGBoost axis permanently closed** (exp 0017)
+- Huber XGB individually at 0.0537 vs standard XGB 0.0534 (+0.0003); provided genuine diversity in 4-model ensemble but isotonic absorbed all diversity gains; **noise-robust-loss sub-axis permanently closed** (exps 0017, 0019)
+- NACP sample weighting is near-uniform (95.7% of samples weight >0.5); cannot meaningfully shift isotonic's bin means; **calibration-weighting sub-axis permanently closed** (exp 0018)
+- TabKD neural student catastrophically collapsed (val_loss=8.4962, exp 0016); binary categoricals yield only 112 base interaction patterns, insufficient; **neural-student axis permanently closed** (exps 0008, 0009, 0016)
+- MorphBoost library not available on PyPI (no matching distribution) and GitHub returns 404 Not Found; **new-model GBDT-variant axis permanently closed** (exp 0022)
+- CatBoost with native `cat_features=...` performed worse than ordinal encoding by +0.0009 (exp 0011)
 - LightGBM DART boosting produced structurally weaker models (0.0566 vs 0.0555 GBDT-LGB) and received 0.00 ensemble weight (exp 0006)
-- Focal loss XGB with sample weights catastrophically regressed (+0.018 log_loss); **axis closed** (exps 0009, 0010)
-- Focal loss XGB with Optuna HPO still regressed by +0.0025 (exp 0010); fixed γ and HPO-tuned γ both harmful; **axis closed** (exp 0010)
-- T-MLP individually achieved 0.0658 (vs TabR's 0.0688); both are fundamentally uncompetitive (~5% max ensemble weight); **axis closed** (exps 0008, 0009)
-- LR meta-learner stacking failed across 10+ replications (0.0636–0.0651) due to multicollinearity; **axis closed** (exps 0005–0011)
-- GBDT feature bagging at 60% feature subsets degrades individual model quality more than diversity helps; val_loss regressed +0.0004 to 0.051484 vs best 0.051087 (exp 0015)
-- LightGBM was most sensitive to feature bagging (degraded 0.0015 individually); weights shifted toward equal (0.45/0.10/0.45 vs 0.65/0.10/0.25), confirming XGB-heavy pattern reflects genuine quality superiority; **axis closed** (exp 0015)
+- Focal loss XGB with Optuna HPO regressed catastrophically (+0.018, exp 0010); **axis permanently closed**
+- T-MLP individually achieved 0.0658 (vs TabR's 0.0688); fundamentally uncompetitive; **axis permanently closed** (exps 0008, 0009)
 
 ## Features
-- 168 categorical aggregation features (mean/std/median of 7 numerics across 8 categories) plus polynomial/ratio/binned features did not improve val_loss (exp 0006)
+- 168 categorical aggregation features plus polynomial/ratio/binned features did not improve val_loss (exp 0006)
 - Target encoding with `smoothing=0.3` alongside ordinal encoding produced noise; val_loss worsened by +0.00002 (exp 0003)
-- Frequency encoding as additional features (16→24 features) degraded CatBoost to 0.0555 vs typical 0.0536–0.0540, the worst individual CatBoost in recent experiments; primary regression driver (exp 0014)
-- Frequency encoding is redundant with ordinal encoding on this dataset: GBDTs already learn frequency-like information from ordinal features via split conditions (exp 0014)
-- **The dataset's 11 numeric + 8 categorical features are already sufficient; additional feature engineering on these same features yields diminishing or negative returns** (exps 0003, 0006, 0014, 0015)
-- **Frequency encoding as additional features: axis closed** (exp 0014)
-- **GBDT feature bagging: axis closed** (exp 0015)
+- Frequency encoding as additional features (16→24 features) degraded CatBoost to 0.0555 vs typical 0.0536–0.0540 (exp 0014)
+- GBDT feature bagging at 60% feature subsets degrades individual model quality more than diversity helps; val_loss regressed +0.0004 to 0.051484 vs best 0.050500 (exp 0015)
+- **The dataset's 11 numeric + 8 categorical features are already sufficient; additional feature engineering yields diminishing or negative returns** (exps 0003, 0006, 0014, 0015)
 
 ## Ensembling
-- Isotonic regression is the single most effective post-processing step: ~0.0010 improvement over weighted baseline regardless of base model quality (exps 0010–0015)
-- 500-bin custom isotonic calibration: 0.051087 vs sklearn default isotonic 0.051716 — a +0.0006 gap confirming sklearn auto-binning is suboptimal for 126K-sample val set (exp 0010)
-- U-shaped bin-count curve: val_loss increases monotonically as N decreases (500→200→100→50→30); fewer bins = underfitting (exp 0010)
-- Grid-searched unequal weights (0.65/0.10/0.25) consistently beat equal-weight Caruana subsets; the XGB-heavy pattern is real (exp 0007)
-- JSD-weighting provides essentially zero improvement over uniform isotonic weighting (+0.000005–0.000013, within noise); miscalibration is not concentrated in sparse feature regions (exp 0013)
-- Density-threshold isotonic catastrophically failed (0.27–0.28) because isotonic needs the full validation distribution (exp 0013)
-- NA-FIR sum-to-one post-hoc normalization: only +0.000012 over default isotonic; sum-to-one violations are negligible (exp 0012)
-- Warm-start Optuna via enqueue_trial regressed base models (+0.0004); Optuna's random sampler is already near-optimal (exp 0011)
-- ROC-regularized isotonic did not outperform plain per-class isotonic (exp 0005)
-- **Calibration is not the bottleneck; base model quality is — comprehensively confirmed by exps 0013 (JSD neutral), 0012 (NA-FIR neutral), 0011 (warm-start regression), 0010 (bin regularization neutral beyond 500 bins). Future effort should go to base model quality and feature engineering, not calibration refinements.** (exps 0010–0013)
-- Adding a 4th model to a fixed-time budget degrades ALL base models; **axis closed** (exps 0008, 0009)
-- CoVar pseudo-labeling with MC > 0.88 AND RCV < median_RCV produced severe class imbalance; RCV was ≈0.000 for 50% of test rows; **axis closed** (exp 0006)
-- Pseudo-labeling with fewer than typical Optuna trials exceeds the 10-minute budget; **axis closed** (exp 0006)
-- SEA (Self-Error Adjustment) ensembling has **never been run** (arxiv 2508.04948)
-- CAST density-aware pseudo-labeling has **never been tried** (arxiv 2310.06380)
-- TabKD interaction-diversity knowledge distillation has **never been tried** (arxiv 2603.15481)
-- Quantile XGBoost (QXGBoost) for uncertainty-aware isotonic calibration has **never been tried** (arxiv 2304.11732)
-- NACP noise-aware conformal prediction for isotonic calibration has **never been tried** (arxiv 2501.12749)
-- Unified Theory of Diversity in Ensemble Learning has **never been empirically tested** (arxiv 2301.03962)
+- Isotonic regression with 500 bins is the single most effective post-processing step: ~0.0017 improvement over weighted baseline regardless of base model quality; it absorbs nearly all diversity gains from any ensemble variant (exps 0010–0023)
+- **Calibration is not the bottleneck; base model quality is — confirmed across 8 independent calibration approaches** (JSD, NA-FIR, warm-start, bin regularization, QXGBoost-uncertainty, NACP, UTD, QP-theory) all produced noise-level or null improvements over unweighted isotonic (exps 0011–0023)
+- 3-GBDT with isotonic (0.050500) has never been beaten by any 4th-model addition — TabR, T-MLP, TabKD, Huber-XGB, QXGBoost all failed (exps 0008, 0009, 0016–0019)
+- scipy.optimize SLSQP continuously finds XGB-heavy corners; the theoretical ceiling for weight optimization is essentially exhausted (exp 0016)
+- **UTD confirms XGB-heavy pattern is theoretically optimal**: Bias²=0.012280 is fixed across all weight configurations, confirming base model quality is the only remaining lever (exp 0020)
+- LR meta-learner stacking failed across 10+ replications due to multicollinearity; **axis permanently closed** (exps 0005–0011)
+- Multi-seed XGB averaging was budget-inefficient: Optuna HPO consumed 553s of 600s budget (20 XGB, 8 LGB, 23 CatBoost trials), leaving only 64s for multi-seed retraining; the experiment regressed to 0.050806 vs 0.0505 due to fewer trials, not the multi-seed idea; **the core hypothesis (5-seed XGB averaging → smoother OOF → tighter isotonic) remains UNTESTED** (exp 0023)
+- SEA (Self-Error Adjustment, arxiv 2508.04948) has never been empirically tested; QP-based ensemble weights (arxiv 2512.22286) has never been empirically tested
+- **The sole remaining ensembling lever is variance reduction at the individual-model level via multi-seed averaging** — UTD identified variance as the sole weight-dependent term; multi-seed averaging on a fixed config (without competing with Optuna for budget) could test this
 
 ## HPO
-- 60–100 Optuna trials per model within a 3-minute budget is the stable operating point; reduced trial counts are the dominant regression cause (exps 0001–0015)
+- **60–100 Optuna trials per model within a 3-minute budget is the stable operating point; reduced trial counts are the dominant regression cause across all failed experiments** — confirmed: 31 trials → 0.0505; 21 → 0.0515; 14 → 0.0514; 10 → 0.0515; 6 → 0.0518; fewer trials regress every time (exps 0016–0023)
+- **SMAC unavailable on this system**: pyrfr C++ extension build failure; cannot be installed via pip; requires `conda install pyrfr` or system-level gcc setup (exp 0021)
+- **No-nEst Optuna (fixed 2000 estimators + early stopping) is budget-inefficient**: Each trial takes ~16s (full 2000 trees before early stopping), producing only 10 XGB trials in 160s vs typical 30+ at ~5s/trial with n_est in search space (exp 0021)
+- Warm-start Optuna with prior trial histories regressed base model quality (+0.0004); **axis closed** (exp 0011)
 - Narrowing search ranges to known-good regions did not beat wider ranges (exp 0012)
-- Focal loss Optuna HPO for XGBoost produces models 0.018 worse than standard objective (exp 0009)
-- 5-fold stratified CV blend (37 trials) was worse than single holdout (0.0550 vs 0.0544); CV overhead exceeds benefit for this dataset size (exp 0004)
-- Temperature scaling temperatures ~0.94–0.95 confirmed systematic overconfidence; isotonic's nonlinear approach handles this where temperature scaling's linear approach fails (exp 0005)
-- Warm-start Optuna with prior trial histories regressed base model quality (+0.0004); Optuna's random sampler already efficiently explores the hyperparameter landscape (exp 0011)
+- Focal loss Optuna HPO for XGBoost produces models 0.018 worse than standard objective (exp 0010); **axis permanently closed**
+- **StratifiedKFold(n_splits=5) for Optuna HPO validation has never been tested**; standard holdout may leave minority classes with unreliable validation signals for LGB and CatBoost
+- **Irredundant k-fold CV (non-overlapping training partitions, arxiv 2507.20048) has never been tested**; standard overlapping folds produce optimistically biased variance estimates
+- **Early-stopping k-fold CV during Optuna HPO (arxiv 2405.03389) has never been tested**; the paper shows +167% more configurations within the same time budget by stopping individual fold training when val_loss flattens
 
 ## Calibration
-- Per-class isotonic regression temperatures are consistently near 1.0 (~0.999–1.002); improvement comes from piecewise probability compression, not global softening (exps 0010–0015)
-- **Calibration is not the bottleneck; base model quality is — comprehensively confirmed** (exps 0010–0013, 0015)
-- The gap between current best (0.051087) and the theoretical isotonic ceiling is ~0.0003 (calibration refinements exhausted)
-- The next improvement opportunity must come from base model quality, not post-hoc calibration
+- Per-class isotonic regression temperatures are consistently near 1.0 (~0.999–1.002); improvement comes from piecewise probability compression, not global softening (exps 0010–0020)
+- The gap between current best (0.050500) and the theoretical isotonic ceiling is ~0.0003; calibration refinements are exhausted across 8 independent approaches
+- **The next improvement opportunity must come from base model quality, not post-hoc calibration** — confirmed across 8 calibration variants, 4 neural additions, 2 loss-function changes, and UTD first-principles analysis
 
 ## Open questions
-- **TabKD interaction-diversity knowledge distillation** — standard KL-divergence KD fails on tabular because tabular models encode knowledge through feature interactions, not just logits; TabKD generates synthetic queries maximizing pairwise interaction coverage, producing a genuinely diverse neural student without a 4th-model HPO budget penalty; the TabR/T-MLP neural axis is closed (both uncompetitive individually), but TabKD's student is trained via interaction-diversity matching on 3 GBDT teachers — fundamentally different training signal; risk: if the neural student remains uncompetitive (~0.065+), the axis closes permanently (arxiv 2603.15481 — unconsumed)
-- **Quantile XGBoost (QXGBoost) for uncertainty-weighted isotonic** — QXGBoost with Huber-quantile loss produces prediction intervals whose width is a direct per-sample uncertainty measure absent from point predictions; isotonic calibration can be weighted by inverse-interval-width (confident samples get higher calibration weight), addressing miscalibration in high-uncertainty regions; risk: QXGBoost adds a 4th model whose HPO budget would reduce the 3 GBDT trial counts — use a single fixed QXGBoost config (no HPO) to avoid budget penalty (arxiv 2304.11732 — unconsumed)
-- **NACP noise-aware conformal prediction for isotonic calibration** — isotonic treats every validation label as ground truth, but the dataset's ~1.4% noisy labels distort the calibration mapping; NACP estimates a noise transition matrix from calibration data and adjusts validation sample weights accordingly, down-weighting samples whose labels are likely mislabeled; risk: isotonic already handles noise implicitly via piecewise-constant smoothing, so NACP's correction may be redundant with isotonic's built-in regularization (arxiv 2501.12749 — unconsumed)
-- **Unified Theory of Diversity — empirical validation** — the persistent XGB-heavy weights (0.65/0.10/0.25) across 15+ experiments may represent the exact optimal bias-variance-diversity tradeoff for this dataset's label distribution; arxiv 2301.03962 proves that for certain label skews, promoting diversity hurts accuracy; empirically testing equal-weight Caruana (λ→0) vs current unequal weights confirms whether diversity-forcing methods are fundamentally misaligned with this data's structure; risk: already tested in exp 0007 (Caruana equal-weight was worse), but the theory suggests computing the exact optimal diversity level rather than grid-searching weights (arxiv 2301.03962 — unconsumed)
-- **XGBoost with Huber loss instead of logistic** — all 3 GBDTs use standard log-loss (logistic for multiclass), which is sensitive to mislabeled samples and miscalibrated extreme probabilities; Huber loss is more robust to label noise because it transitions from L2 to L1 past a threshold, down-weighting ambiguous samples without collapsing gradient quality like focal loss did; risk: Huber loss for multiclass GBDT is less common and may require custom implementation; if individual quality degrades, the axis closes (arxiv 2310.05067 — partially consumed for CatBoost RFL, not for XGB Huber)
+- **Irredundant k-fold HPO** — arxiv 2507.20048 proves non-overlapping training partitions give less optimistic variance estimates and reduce compute by eliminating redundant instance usage; if Optuna selects more robust hyperparameters from honest variance comparisons, base model quality improves and isotonic gains ~0.0002–0.0005; risk: the benefit requires enough data per fold to avoid training on too-small partitions; also requires more folds or larger dataset than standard k-fold
+- **Early-stopping k-fold HPO** — arxiv 2405.03389 shows +167% more configurations within the same time budget by stopping fold training when val_loss plateaus; this could restore the ~30+ trial count that exp 0023 lost (only 20 XGB trials due to budget exhaustion); risk: premature stopping per fold may select low-quality early-stopping rounds that hurt overall model quality
+- **StratifiedKFold Optuna HPO** — standard random 5-fold may leave minority classes with unreliable validation folds, degrading HPO reliability for LGB and CatBoost which receive only 0.01–0.35 ensemble weight; class-stratified fold assignment ensures each fold faithfully represents the class distribution; risk: if minority class weakness is a genuine quality problem (not a fold reliability problem), stratified folds don't help
+- **SEA (Self-Error Adjustment) for accuracy-diversity tradeoff** — arxiv 2508.04948 decomposes ensemble error into self-error + diversity terms with adjustable λ; unlike NCL which failed, SEA provides tighter theoretical bounds and broader λ range; grid-searching λ may find a better operating point than scipy-optimized fixed weights; risk: UTD showed variance reduction dominates on this dataset, so promoting diversity via high λ may hurt
+- **QP-based ensemble weight optimization** — arxiv 2512.22286 proves optimal ensemble weights are solutions to constrained quadratic programs rather than gradient-based SLSQP search; replacing SLSQP with QP may find better optima; risk: SLSQP already finds XGB-heavy corners robustly across 23+ experiments; QP may not improve on an already-converged optimum
