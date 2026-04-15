@@ -17,7 +17,7 @@ def _bar(pct: float, width: int = 16) -> str:
 
 class GpuStats(Vertical):
     DEFAULT_CSS = """
-    GpuStats { height: auto; border: round $panel; padding: 0 1; }
+    GpuStats { height: 7; border: round $panel; padding: 0 1; }
     GpuStats > #gpu-title { height: 1; color: $accent; }
     GpuStats > #gpu-body { height: 3; }
     """

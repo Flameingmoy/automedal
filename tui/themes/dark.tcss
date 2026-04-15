@@ -16,7 +16,7 @@ Footer {
 }
 
 #top-row {
-    height: auto;
+    height: 16;
     layout: horizontal;
 }
 
@@ -50,12 +50,75 @@ Footer {
     layout: vertical;
 }
 
-#right-stack > CurrentExperiment,
-#right-stack > GpuStats,
-#right-stack > SessionStats {
-    height: auto;
-}
+#right-stack > CurrentExperiment { height: 8; }
+#right-stack > GpuStats         { height: 7; }
+#right-stack > SessionStats     { height: 9; }
 
 LiveStream {
     border: round #6272A4;
 }
+
+/* ── Home screen ─────────────────────────────────────────────── */
+
+HomeScreen {
+    background: #0F111A;
+}
+
+HomeScreen > #home-help {
+    background: #1A1D2E;
+    color: #6272A4;
+}
+
+HomeScreen > RecentActivity {
+    height: 9;
+    border: round #6272A4;
+}
+
+HomeScreen > CommandInput {
+    height: 3;
+    border: round #50FA7B;
+}
+
+/* ── CommandOutputScreen ─────────────────────────────────────── */
+
+CommandOutputScreen > #co-title {
+    background: #161924;
+    color: #8BE9FD;
+}
+
+CommandOutputScreen > RichLog {
+    border: round #6272A4;
+    height: 1fr;
+}
+
+/* ── SelectCompetitionScreen ────────────────────────────────── */
+
+SelectCompetitionScreen > #sc-title { background: #161924; color: #8BE9FD; }
+SelectCompetitionScreen DataTable   { border: round #6272A4; }
+
+/* ── SetupWizardScreen ──────────────────────────────────────── */
+
+SetupWizardScreen > #sw-title { background: #161924; color: #8BE9FD; }
+SetupWizardScreen RadioSet    { border: round #6272A4; }
+
+/* ── DiscoverScreen ─────────────────────────────────────────── */
+
+DiscoverScreen > #dc-title { background: #161924; color: #8BE9FD; }
+DiscoverScreen DataTable    { border: round #6272A4; }
+
+/* ── StatusScreen ───────────────────────────────────────────── */
+
+StatusScreen > #st-title { background: #161924; color: #8BE9FD; }
+
+/* ── InitProgressScreen ─────────────────────────────────────── */
+
+InitProgressScreen > #ip-title { background: #161924; color: #8BE9FD; }
+InitProgressScreen .ip-step    { color: #E1E4E8; }
+
+/* ── ConfirmCleanModal ──────────────────────────────────────── */
+
+ConfirmCleanModal > #cc-box { background: #1A1D2E; border: round #FF5555; }
+
+/* ── DoctorScreen ───────────────────────────────────────────── */
+
+DoctorScreen > #dr-title { background: #161924; color: #8BE9FD; }

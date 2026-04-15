@@ -39,6 +39,9 @@ catboost_info/
 # TUI local state (generated sprites, saved stream buffers)
 .automedal/
 
+# Pi agent auto-installed by automedal (populated on first run)
+automedal/_vendor/node_modules/
+
 # Claude Code local config
 .claude/
 

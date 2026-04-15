@@ -123,9 +123,9 @@ wheels = [
 ]
 
 [[package]]
-name = "autoresearch-kaggle"
-version = "0.1.0"
-source = { virtual = "." }
+name = "automedal"
+version = "1.0.0"
+source = { editable = "." }
 dependencies = [
     { name = "catboost" },
     { name = "category-encoders", version = "2.8.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },

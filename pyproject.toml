@@ -1,7 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Install the automedal package plus the tui/harness/scout sub-packages so
+# imports like `from tui.state import ...` work in both dev and installed modes.
+packages = ["automedal", "tui", "harness", "scout"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Ship prompts/ and templates/ inside the automedal package so user-mode
+# (pipx install) can find them at automedal/prompts/ and automedal/templates/.
+"prompts"   = "automedal/prompts"
+"templates" = "automedal/templates"
+
 [project]
-name = "autoresearch-kaggle"
-version = "0.1.0"
-description = "Autonomous Kaggle competition research — agent-agnostic harness"
+name = "automedal"
+version = "1.0.0"
+description = "Autonomous Kaggle ML research — one install, one command"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 dependencies = [
@@ -71,6 +86,7 @@ test = [
 ]
 
 [project.scripts]
+automedal     = "automedal.cli:main"
 automedal-tui = "tui.__main__:main"
 
 [tool.pytest.ini_options]
