@@ -24,15 +24,16 @@ if PROJECT_ROOT not in sys.path:
 CANDIDATES_JSON = os.path.join(PROJECT_ROOT, "scout", "outputs", "competition_candidates.json")
 
 
-def load_candidates():
+def load_candidates(candidates_json=None):
     """Load competition candidates from JSON."""
-    if not os.path.exists(CANDIDATES_JSON):
+    path = candidates_json or CANDIDATES_JSON
+    if not os.path.exists(path):
         print("ERROR: No candidates file found.")
-        print(f"  Expected: {CANDIDATES_JSON}")
-        print(f"  Run 'python scout/discover.py' first.")
+        print(f"  Expected: {path}")
+        print(f"  Run 'automedal discover' first.")
         return None
 
-    with open(CANDIDATES_JSON, "r") as f:
+    with open(path, "r") as f:
         data = json.load(f)
 
     candidates = data.get("candidates", [])
@@ -99,6 +100,21 @@ def select_competition(candidates):
         print(f"  '{choice}' not found. Try a number or exact slug.")
 
 
+def pick_and_bootstrap(slug: str, yes: bool = False) -> int:
+    """Non-interactive: bootstrap a competition by slug.
+
+    Used by the TUI SelectCompetitionScreen after the user picks a row.
+    Returns subprocess exit code.
+
+    Args:
+        slug: Competition slug to bootstrap.
+        yes: Pass --yes to bootstrap (skip low-confidence warning prompt).
+    """
+    from scout.bootstrap import bootstrap
+    extra_args = ["--yes"] if yes else []
+    return bootstrap(slug, extra_args=extra_args)
+
+
 def main():
     print("=" * 60)
     print("AutoMedal — Competition Selector")
@@ -119,11 +135,10 @@ def main():
     print()
     response = input("  Bootstrap this competition now? [Y/n] ").strip().lower()
     if response in ("", "y", "yes"):
-        from scout.bootstrap import bootstrap
-        bootstrap(slug)
+        pick_and_bootstrap(slug)
     else:
         print(f"\n  To bootstrap later, run:")
-        print(f"    python scout/bootstrap.py {slug}")
+        print(f"    automedal init {slug}")
 
 
 if __name__ == "__main__":

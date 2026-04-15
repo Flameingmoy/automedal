@@ -224,13 +224,16 @@ def run_prepare():
     return True
 
 
-def bootstrap(slug, skip_download=False, smoke_test=False):
+def bootstrap(slug, skip_download=False, smoke_test=False, yes=False, abort_on_warning=False, extra_args=None):
     """Full bootstrap pipeline for a competition.
 
     Args:
         slug: Kaggle competition slug (e.g. 'playground-series-s6e4')
         skip_download: If True, skip download (data already in data/)
         smoke_test: If True, run 'bash run.sh 1' after bootstrap
+        yes: If True, skip the low-confidence "continue anyway?" prompt (auto-yes)
+        abort_on_warning: If True, abort instead of prompting when confidence < 0.7
+        extra_args: Ignored; accepted for forward-compat with CLI passthrough
     """
     print("=" * 60)
     print("AutoMedal — Competition Bootstrap")
@@ -258,10 +261,16 @@ def bootstrap(slug, skip_download=False, smoke_test=False):
         for w in schema["warnings"]:
             print(f"    - {w}")
         print()
-        response = input("  Continue anyway? [y/N] ").strip().lower()
-        if response != "y":
-            print("  Aborted.")
+        if abort_on_warning:
+            print("  Aborted (low confidence).")
             sys.exit(0)
+        if not yes:
+            response = input("  Continue anyway? [y/N] ").strip().lower()
+            if response != "y":
+                print("  Aborted.")
+                sys.exit(0)
+        else:
+            print("  Continuing (--yes).")
 
     # Step 3: Fetch competition metadata
     print("\n  Fetching competition metadata...")
@@ -338,9 +347,19 @@ def main():
                         help="Skip data download (data already in data/)")
     parser.add_argument("--smoke-test", action="store_true",
                         help="Run a single experiment after bootstrap")
+    parser.add_argument("--yes", action="store_true",
+                        help="Auto-yes for low-confidence schema warnings")
+    parser.add_argument("--abort-on-warning", action="store_true",
+                        help="Abort instead of prompting when schema confidence < 0.7")
     args = parser.parse_args()
 
-    bootstrap(args.slug, skip_download=args.skip_download, smoke_test=args.smoke_test)
+    bootstrap(
+        args.slug,
+        skip_download=args.skip_download,
+        smoke_test=args.smoke_test,
+        yes=args.yes,
+        abort_on_warning=args.abort_on_warning,
+    )
 
 
 if __name__ == "__main__":

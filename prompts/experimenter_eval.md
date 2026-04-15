@@ -34,6 +34,8 @@ You are the **Experimenter** (evaluation pass). Training has already run — the
    val_loss: <float, or nan if crashed>
    val_accuracy: <float, or nan if crashed>
    best_so_far: <float — best val_loss in agent/results.tsv after this run>
+   diff_summary: <one sentence describing the code change, e.g. "switched LGBM to dart boosting, n_estimators 800→1200">
+   val_loss_delta: <signed float, e.g. +0.0007 or -0.0014 — delta vs best_so_far before this run>
    ---
 
    ## Hypothesis

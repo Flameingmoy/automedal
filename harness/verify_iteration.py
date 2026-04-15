@@ -318,7 +318,167 @@ def check_experimenter(warnings, exp_id):
     # A crashed run with status=crashed intentionally skips the append.
 
 
+# ─── regression gate ─────────────────────────────────────────────────────
+
+def check_regression(val_loss: float, best_before: float) -> list:
+    """Return a list of warning strings if val_loss regressed more than 1%.
+
+    Args:
+        val_loss: The val_loss achieved in this experiment.
+        best_before: The best val_loss before this experiment ran.
+
+    Returns:
+        A list with one warning string, or an empty list if no regression.
+    """
+    if best_before is None or val_loss is None:
+        return []
+    try:
+        vl = float(val_loss)
+        bb = float(best_before)
+    except (TypeError, ValueError):
+        return []
+    if bb <= 0:
+        return []
+    if vl > bb * 1.01:
+        return [
+            f"REGRESSION: val_loss {vl:.4f} exceeds best_before {bb:.4f} by "
+            f"{100*(vl/bb - 1):.1f}% (>1% threshold)"
+        ]
+    return []
+
+
+# ─── success_criteria evaluation ─────────────────────────────────────────
+
+_SC_RE = re.compile(
+    r"val_loss\s*(?P<op><=|>=|<|>|==)\s*(?P<val>[0-9.]+)"
+    r"(?:\s+or\s+val_loss\s*(?P<op2><=|>=|<|>|==)\s*"
+    r"(?P<expr2>best_so_far\s*\*\s*[0-9.]+|[0-9.]+))?",
+    re.IGNORECASE,
+)
+
+
+def _eval_criterion(criteria_str: str, val_loss: float, best_so_far: float) -> tuple:
+    """Evaluate a success_criteria expression.
+
+    Returns:
+        (passed: bool, near_miss: bool)
+        near_miss is True when the criterion was missed by ≤ 1%.
+    """
+    if not criteria_str:
+        return True, False
+
+    m = _SC_RE.search(criteria_str)
+    if not m:
+        return True, False  # unparseable → don't block
+
+    def _target_val(raw: str) -> float | None:
+        raw = raw.strip()
+        if "best_so_far" in raw.lower():
+            factor_match = re.search(r"\*\s*([0-9.]+)", raw)
+            factor = float(factor_match.group(1)) if factor_match else 1.0
+            return best_so_far * factor
+        try:
+            return float(raw)
+        except ValueError:
+            return None
+
+    def _compare(vl: float, op: str, target: float) -> bool:
+        ops = {"<=": vl <= target, ">=": vl >= target,
+               "<": vl < target, ">": vl > target, "==": abs(vl - target) < 1e-8}
+        return ops.get(op, False)
+
+    op1   = m.group("op")
+    val1  = _target_val(m.group("val"))
+    op2   = m.group("op2")
+    expr2 = m.group("expr2")
+
+    if val1 is None:
+        return True, False
+
+    clause1 = _compare(val_loss, op1, val1)
+    clause2 = True
+    val2    = None
+    if op2 and expr2:
+        val2 = _target_val(expr2)
+        if val2 is not None:
+            clause2 = _compare(val_loss, op2, val2)
+
+    passed = clause1 or (clause2 if val2 is not None else False)
+
+    if passed:
+        return True, False
+
+    # Near-miss: would pass if val_loss were 1% lower
+    near_miss = False
+    adjusted = val_loss * 0.99
+    c1_adj = _compare(adjusted, op1, val1)
+    if c1_adj:
+        near_miss = True
+    elif val2 is not None:
+        c2_adj = _compare(adjusted, op2, val2)
+        if c2_adj:
+            near_miss = True
+
+    return False, near_miss
+
+
+def check_success_criteria(
+    exp_id: str,
+    val_loss: float,
+    best_so_far: float,
+) -> tuple:
+    """Check success_criteria for the running queue entry.
+
+    Returns:
+        (passed: bool, near_miss: bool, criteria_str: str)
+    """
+    q_text = _read_file(QUEUE_PATH)
+    if not q_text:
+        return True, False, ""
+
+    # Find the running entry (STATUS: running or done matching exp_id)
+    current_entry = None
+    in_entry = False
+    lines = q_text.splitlines()
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # Detect any queue entry header
+        if re.match(r"^##\s+\d+\.", stripped):
+            in_entry = True
+            current_entry = {"success_criteria": ""}
+        if in_entry and "running" in stripped.lower():
+            # This is the running entry
+            break
+    else:
+        current_entry = None
+
+    if current_entry is None:
+        return True, False, ""
+
+    # Scan lines after the header for success_criteria:
+    found = False
+    criteria_str = ""
+    for line in lines:
+        if line.strip().lower().startswith("success_criteria:"):
+            _, _, val = line.partition(":")
+            criteria_str = val.strip()
+            found = True
+            break
+
+    if not found or not criteria_str:
+        return True, False, ""
+
+    passed, near_miss = _eval_criterion(criteria_str, val_loss, best_so_far)
+    return passed, near_miss, criteria_str
+
+
 # ─── entrypoint ──────────────────────────────────────────────────────────
+
+# Exit codes:
+#   0 = all checks passed
+#   1 = warnings (soft failure)
+#   2 = regression gate triggered (strict mode only)
+#   3 = success_criteria near-miss (retry suggested)
 
 def main():
     parser = argparse.ArgumentParser(description="AutoMedal iteration invariant checker")
@@ -329,9 +489,17 @@ def main():
         help="Which phase just finished",
     )
     parser.add_argument("--exp-id", help="Experiment ID (required for experimenter)")
+    parser.add_argument("--val-loss", type=float, default=None,
+                        help="Achieved val_loss (for regression gate + success_criteria)")
+    parser.add_argument("--best-before", type=float, default=None,
+                        help="Best val_loss before this run (for regression gate)")
+    parser.add_argument("--best-so-far", type=float, default=None,
+                        help="Best val_loss after this run (for success_criteria)")
     args = parser.parse_args()
 
     warnings = []
+    exit_code = 0
+
     if args.phase == "researcher":
         check_researcher(warnings)
     elif args.phase == "strategist":
@@ -339,13 +507,47 @@ def main():
     elif args.phase == "experimenter":
         check_experimenter(warnings, args.exp_id)
 
+        # Regression gate
+        if args.val_loss is not None and args.best_before is not None:
+            reg_warnings = check_regression(args.val_loss, args.best_before)
+            gate_mode = os.environ.get("AUTOMEDAL_REGRESSION_GATE", "warn").lower()
+            if reg_warnings:
+                for w in reg_warnings:
+                    print(f"REGRESSION: {w}", file=sys.stderr)
+                if gate_mode == "strict":
+                    exit_code = 2  # caller should revert
+
+        # Success criteria
+        if args.val_loss is not None and args.best_so_far is not None and args.exp_id:
+            passed, near_miss, criteria = check_success_criteria(
+                args.exp_id, args.val_loss, args.best_so_far
+            )
+            if not passed:
+                if near_miss:
+                    print(
+                        f"NEAR_MISS: success_criteria [{criteria}] missed by ≤1%  "
+                        f"val_loss={args.val_loss:.4f}",
+                        file=sys.stderr,
+                    )
+                    if exit_code == 0:
+                        exit_code = 3  # caller may attempt one retry
+                else:
+                    print(
+                        f"CRITERIA_FAIL: success_criteria [{criteria}] not met  "
+                        f"val_loss={args.val_loss:.4f}",
+                        file=sys.stderr,
+                    )
+
     if warnings:
         for w in warnings:
             print(f"WARN: {w}", file=sys.stderr)
-        sys.exit(1)
+        if exit_code == 0:
+            exit_code = 1
 
-    print(f"OK: {args.phase} phase invariants satisfied")
-    sys.exit(0)
+    if exit_code == 0:
+        print(f"OK: {args.phase} phase invariants satisfied")
+
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":
