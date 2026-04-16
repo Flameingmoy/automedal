@@ -42,13 +42,42 @@ from rich.text import Text
 SIZES = (16, 24, 32)
 FRAMES = 2
 
+# Package-bundled default sprites (committed to repo / installed with the package)
+_ASSETS_DIR = Path(__file__).parent / "assets" / "sprites"
+
 
 def cache_dir() -> Path:
     return Path(os.path.expanduser("~/.automedal/sprites"))
 
 
-def _sprite_path(phase: Phase, size: int, frame: int, theme_name: str) -> Path:
+def _user_sprite_path(phase: Phase, size: int, frame: int, theme_name: str) -> Path:
+    """Path under ~/.automedal/sprites/ (user override — highest priority)."""
     return cache_dir() / theme_name / phase.value / f"{size}" / f"frame_{frame:02d}.png"
+
+
+def _bundled_sprite_path(phase: Phase, size: int, frame: int, theme_name: str) -> Path:
+    """Path inside tui/assets/sprites/ (ships with the package)."""
+    return _ASSETS_DIR / theme_name / phase.value / f"{size}" / f"frame_{frame:02d}.png"
+
+
+def _sprite_path(phase: Phase, size: int, frame: int, theme_name: str) -> Path:
+    """Resolve sprite path: user override → bundled asset → generate."""
+    user = _user_sprite_path(phase, size, frame, theme_name)
+    if user.exists():
+        return user
+    bundled = _bundled_sprite_path(phase, size, frame, theme_name)
+    if bundled.exists():
+        return bundled
+    # Fall through to generate into cache_dir
+    return user
+
+
+def _user_medal_path(rank: str, size: int, theme_name: str) -> Path:
+    return cache_dir() / theme_name / "medal" / f"{rank}_{size}.png"
+
+
+def _bundled_medal_path(rank: str, size: int, theme_name: str) -> Path:
+    return _ASSETS_DIR / theme_name / "medal" / f"{rank}_{size}.png"
 
 
 def _medal_path(rank: str, theme_name: str) -> Path:
@@ -191,9 +220,15 @@ def load_sprite(
 def load_medal(rank: str, size: int = 16, theme: Theme = DEFAULT_THEME) -> Union["Pixels", Text]:
     size = min(SIZES, key=lambda s: abs(s - size))
     if _HAS_PIL and _HAS_PIXELS:
-        p = cache_dir() / theme.name / "medal" / f"{rank}_{size}.png"
-        if not p.exists():
+        user = _user_medal_path(rank, size, theme.name)
+        bundled = _bundled_medal_path(rank, size, theme.name)
+        if user.exists():
+            p = user
+        elif bundled.exists():
+            p = bundled
+        else:
             generate_default_sprites(theme)
+            p = user
         pixels = _load_pixels(str(p))
         if pixels is not None:
             return pixels
