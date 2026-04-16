@@ -55,6 +55,22 @@ class HomeScreen(Screen):
         yield CommandInput(id="home-cmd")
         yield Footer()
 
+    def on_mount(self) -> None:
+        self.call_after_refresh(self._check_first_run)
+
+    def _check_first_run(self) -> None:
+        """Auto-push setup wizard on first run (no provider configured)."""
+        import os
+        try:
+            from automedal.dispatch import _needs_setup
+            if _needs_setup(dict(os.environ)):
+                self.query_one("#home-help", Static).update(
+                    "  [yellow]First run detected — let's set up a provider[/]"
+                )
+                self.app.spawn_command("setup", [])
+        except ImportError:
+            pass
+
     def update_state(self, state: AppState) -> None:
         try:
             self.query_one("#home-status", StatusStrip).update_state(state)

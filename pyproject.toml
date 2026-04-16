@@ -86,8 +86,7 @@ test = [
 ]
 
 [project.scripts]
-automedal     = "automedal.cli:main"
-automedal-tui = "tui.__main__:main"
+automedal = "automedal.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

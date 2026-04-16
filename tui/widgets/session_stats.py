@@ -13,9 +13,9 @@ from tui.state import AppState
 
 class SessionStats(Vertical):
     DEFAULT_CSS = """
-    SessionStats { height: 9; border: round $panel; padding: 0 1; }
+    SessionStats { height: 1fr; padding: 0 1; }
     SessionStats > #ss-title { height: 1; color: $accent; }
-    SessionStats > #ss-body { height: 6; }
+    SessionStats > #ss-body { height: 1fr; }
     """
 
     def __init__(self, started_ts: float | None = None, **kw) -> None:

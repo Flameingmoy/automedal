@@ -34,7 +34,7 @@ def _spark(values: list[float]) -> str:
 
 class MetricChart(Vertical):
     DEFAULT_CSS = """
-    MetricChart { height: 16; border: round $panel; padding: 0 1; }
+    MetricChart { height: 1fr; padding: 0 1; }
     MetricChart > #metric-title { height: 1; }
     MetricChart > #metric-body { height: 1fr; }
     """

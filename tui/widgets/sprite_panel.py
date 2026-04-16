@@ -16,8 +16,8 @@ from tui.themes.palette import DEFAULT_THEME, Theme
 
 class SpritePanel(Vertical):
     DEFAULT_CSS = """
-    SpritePanel { height: 16; padding: 0 1; }
-    SpritePanel > #sprite-art { height: 12; }
+    SpritePanel { height: 1fr; padding: 0 1; }
+    SpritePanel > #sprite-art { height: 1fr; }
     SpritePanel > #sprite-label { height: 1; content-align: center middle; }
     SpritePanel > #sprite-sub { height: 1; content-align: center middle; color: $text-muted; }
     """

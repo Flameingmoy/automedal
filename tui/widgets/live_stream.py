@@ -8,7 +8,7 @@ from tui.themes.palette import DEFAULT_THEME, Theme
 
 
 class LiveStream(RichLog):
-    DEFAULT_CSS = "LiveStream { height: 1fr; border: round $panel; }"
+    DEFAULT_CSS = "LiveStream { height: 1fr; }"
 
     def __init__(self, theme: Theme = DEFAULT_THEME, **kw) -> None:
         super().__init__(max_lines=5000, wrap=False, highlight=False, markup=False, **kw)

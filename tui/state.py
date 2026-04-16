@@ -176,6 +176,9 @@ def _on_journal(st: AppState, ev: JournalEntry) -> AppState:
     exp.status = _normalize_status(ev.status)
     if ev.val_loss is not None:
         exp.val_loss = ev.val_loss
+        # Feed the chart — avoid duplicates from re-parsed journals
+        if not any(eid == ev.id for eid, _ in st.val_losses):
+            st.val_losses.append((ev.id, ev.val_loss))
     if ev.best_so_far is not None:
         exp.best_so_far = ev.best_so_far
     if ev.git_tag:

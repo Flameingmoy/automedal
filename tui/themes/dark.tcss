@@ -1,5 +1,9 @@
 /* dark.tcss — default theme for AutoMedal TUI */
 
+/* ── Phase colors ──────────────────────────────────────────────── */
+/* research=#BD93F9 coding=#8BE9FD experiment=#FFB86C
+   submitting=#FFD700 idle=#6272A4 frozen=#FF5555               */
+
 Screen {
     background: #0F111A;
     color: #E1E4E8;
@@ -15,46 +19,57 @@ Footer {
     color: #6272A4;
 }
 
-#top-row {
-    height: 16;
-    layout: horizontal;
+/* ── Dashboard grid ────────────────────────────────────────────── */
+
+DashboardScreen {
+    layout: grid;
+    grid-size: 3 3;
+    grid-columns: 24 1fr 35;
+    grid-rows: 1fr 1fr 15;
 }
 
-#middle-row {
-    height: auto;
-    layout: horizontal;
-}
-
-#top-row > SpritePanel {
-    width: 22;
+#sprite {
+    row-span: 2;
+    padding: 1 2;
     border: round #6272A4;
 }
 
-#top-row > MetricChart {
-    width: 1fr;
-}
-
-#top-row > Leaderboard {
-    width: 34;
-}
-
-#middle-row > ExperimentLog {
-    width: 1fr;
-    height: 14;
+#metric {
+    padding: 1 2;
     border: round #6272A4;
 }
 
-#middle-row > #right-stack {
-    width: 44;
-    height: auto;
+#leaderboard {
+    padding: 1 2;
+    border: round #6272A4;
+}
+
+#explog {
+    padding: 1 2;
+    border: round #6272A4;
+}
+
+#right-stack {
     layout: vertical;
 }
 
-#right-stack > CurrentExperiment { height: 8; }
-#right-stack > GpuStats         { height: 7; }
-#right-stack > SessionStats     { height: 9; }
+#current {
+    padding: 1 2;
+    border: round #6272A4;
+}
 
-LiveStream {
+#gpu {
+    padding: 1 2;
+    border: round #6272A4;
+}
+
+#session {
+    padding: 1 2;
+    border: round #6272A4;
+}
+
+#stream {
+    column-span: 3;
     border: round #6272A4;
 }
 

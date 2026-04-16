@@ -15,9 +15,9 @@ MEDALS = ("🥇", "🥈", "🥉")
 
 class Leaderboard(Vertical):
     DEFAULT_CSS = """
-    Leaderboard { height: auto; border: round $panel; padding: 0 1; }
+    Leaderboard { height: 1fr; padding: 0 1; }
     Leaderboard > #lb-title { height: 1; color: $accent; }
-    Leaderboard > #lb-body { height: auto; }
+    Leaderboard > #lb-body { height: 1fr; }
     """
 
     def __init__(self, theme: Theme = DEFAULT_THEME, **kw) -> None:

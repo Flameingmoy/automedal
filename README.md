@@ -88,11 +88,15 @@ pip install automedal        # or: pipx install automedal
 For development (running from this repo):
 
 ```bash
+pip install -e .             # editable install — `automedal` becomes available globally
+# or with uv:
 uv sync
 # Optional extras:
 uv sync --extra research   # arxiv lookups for the Researcher phase
 uv sync --extra automl     # AutoGluon for the Experimenter
 ```
+
+`./am` is a convenience wrapper equivalent to the `automedal` command — use either when developing from source.
 
 ## Quick Start
 

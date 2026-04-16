@@ -51,8 +51,14 @@ def _parse_journal(path: Path) -> Optional[JournalEntry]:
         except (TypeError, ValueError):
             return None
 
+    raw_id = fm.get("id", "") or path.stem.split("-", 1)[0]
+    try:
+        id_str = f"{int(raw_id):04d}"
+    except (ValueError, TypeError):
+        id_str = str(raw_id)
+
     return JournalEntry(
-        id=str(fm.get("id", "") or path.stem.split("-", 1)[0]),
+        id=id_str,
         slug=str(fm.get("slug", "") or path.stem.split("-", 1)[-1]),
         timestamp=str(fm.get("timestamp", "")),
         git_tag=str(fm.get("git_tag", "")),

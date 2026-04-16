@@ -20,7 +20,7 @@ def _bar(pct: float, width: int = 20) -> str:
 
 class CurrentExperiment(Vertical):
     DEFAULT_CSS = """
-    CurrentExperiment { height: 8; padding: 0 1; }
+    CurrentExperiment { height: 1fr; padding: 0 1; }
     CurrentExperiment > Static { height: 1; }
     """
 

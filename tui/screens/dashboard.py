@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.screen import Screen
 
 from tui.state import AppState
@@ -28,16 +28,14 @@ class DashboardScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="top-row"):
-            yield SpritePanel(id="sprite")
-            yield MetricChart(id="metric")
-            yield Leaderboard(id="leaderboard")
-        with Horizontal(id="middle-row"):
-            yield ExperimentLog(id="explog")
-            with Vertical(id="right-stack"):
-                yield CurrentExperiment(id="current")
-                yield GpuStats(id="gpu")
-                yield SessionStats(id="session")
+        yield SpritePanel(id="sprite")
+        yield MetricChart(id="metric")
+        yield Leaderboard(id="leaderboard")
+        yield ExperimentLog(id="explog")
+        with Vertical(id="right-stack"):
+            yield CurrentExperiment(id="current")
+            yield GpuStats(id="gpu")
+            yield SessionStats(id="session")
         yield LiveStream(id="stream")
 
     def update_state(self, state: AppState) -> None:
