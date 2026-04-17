@@ -14,10 +14,10 @@ class StatusStrip(Horizontal):
     DEFAULT_CSS = """
     StatusStrip {
         height: 1;
-        background: $panel;
+        background: #0F111A;
         padding: 0 1;
     }
-    StatusStrip > #ss-brand { width: auto; color: $accent; }
+    StatusStrip > #ss-brand { width: auto; color: #8BE9FD; }
     StatusStrip > #ss-comp  { width: auto; margin-left: 2; }
     StatusStrip > #ss-right { width: 1fr; content-align: right middle; }
     """

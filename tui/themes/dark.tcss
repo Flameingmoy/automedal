@@ -79,9 +79,9 @@ HomeScreen {
     background: #0F111A;
 }
 
-HomeScreen > #home-help {
-    background: #1A1D2E;
-    color: #6272A4;
+HomeScreen > #home-banner {
+    color: #FFD700;
+    padding: 0 1;
 }
 
 HomeScreen > RecentActivity {
@@ -90,7 +90,7 @@ HomeScreen > RecentActivity {
 }
 
 HomeScreen > CommandInput {
-    height: 3;
+    height: 4;
     border: round #50FA7B;
 }
 

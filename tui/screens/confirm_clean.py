@@ -20,22 +20,22 @@ class ConfirmCleanModal(ModalScreen):
     ConfirmCleanModal > #cc-box {
         width: 60;
         height: 9;
-        background: $panel;
-        border: round $accent;
+        background: #0F111A;
+        border: round #FF5555;
         padding: 1 2;
         layout: vertical;
     }
     ConfirmCleanModal > #cc-box > #cc-title {
         height: 1;
-        color: $accent;
+        color: #FF5555;
     }
     ConfirmCleanModal > #cc-box > #cc-msg {
         height: 3;
-        color: $text;
+        color: #E1E4E8;
     }
     ConfirmCleanModal > #cc-box > #cc-hint {
         height: 2;
-        color: $text-muted;
+        color: #6272A4;
     }
     """
 

@@ -14,7 +14,7 @@ from tui.state import AppState
 class SessionStats(Vertical):
     DEFAULT_CSS = """
     SessionStats { height: 1fr; padding: 0 1; }
-    SessionStats > #ss-title { height: 1; color: $accent; }
+    SessionStats > #ss-title { height: 1; color: #8BE9FD; }
     SessionStats > #ss-body { height: 1fr; }
     """
 

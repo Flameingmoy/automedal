@@ -12,6 +12,8 @@ packages = ["automedal", "tui", "harness", "scout"]
 # (pipx install) can find them at automedal/prompts/ and automedal/templates/.
 "prompts"   = "automedal/prompts"
 "templates" = "automedal/templates"
+# Ship the splash logo (generated on-demand if missing at runtime).
+"tui/assets/logo/automedal.png" = "tui/assets/logo/automedal.png"
 
 [project]
 name = "automedal"
@@ -57,6 +59,13 @@ dependencies = [
     "kaggle>=1.6",
     "pyyaml>=6.0",
     "jinja2>=3.1",
+
+    # TUI (primary UX — `automedal` opens the dashboard)
+    "textual>=0.80",
+    "rich-pixels>=3.0",
+    "textual-plotext>=1.0",
+    "watchdog>=4.0",
+    "pillow>=10",
 ]
 
 [project.optional-dependencies]
@@ -67,14 +76,6 @@ automl = [
 # Arxiv lookups for the Researcher phase (harness v2)
 research = [
     "arxiv>=2.1",
-]
-# Observation dashboard (./am tui)
-tui = [
-    "textual>=0.80",
-    "rich-pixels>=3.0",
-    "textual-plotext>=1.0",
-    "watchdog>=4.0",
-    "pillow>=10",
 ]
 # Optional GPU telemetry for the TUI (nvidia-smi fallback still used if omitted)
 tui-gpu = [

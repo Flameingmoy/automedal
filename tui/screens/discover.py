@@ -18,17 +18,17 @@ class DiscoverScreen(Screen):
     DEFAULT_CSS = """
     DiscoverScreen {
         layout: vertical;
-        background: $background;
+        background: #0F111A;
     }
     DiscoverScreen > #dc-title {
         height: 1;
-        background: $panel;
+        background: #0F111A;
         padding: 0 1;
-        color: $accent;
+        color: #8BE9FD;
     }
     DiscoverScreen > #dc-hint {
         height: 1;
-        color: $text-muted;
+        color: #6272A4;
         padding: 0 1;
     }
     DiscoverScreen > DataTable {
@@ -38,7 +38,7 @@ class DiscoverScreen(Screen):
     DiscoverScreen > #dc-log {
         height: 8;
         margin: 0 1 0 1;
-        border: round $panel;
+        border: round #6272A4;
     }
     """
 

@@ -16,16 +16,16 @@ class CommandOutputScreen(Screen):
     DEFAULT_CSS = """
     CommandOutputScreen {
         layout: vertical;
-        background: $background;
+        background: #0F111A;
     }
     CommandOutputScreen > #co-title {
         height: 1;
-        background: $panel;
+        background: #0F111A;
         padding: 0 1;
-        color: $accent;
+        color: #8BE9FD;
     }
     CommandOutputScreen > RichLog {
-        border: round $panel;
+        border: round #6272A4;
         margin: 1;
     }
     """

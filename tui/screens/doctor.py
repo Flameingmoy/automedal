@@ -24,13 +24,13 @@ class DoctorScreen(Screen):
     DEFAULT_CSS = """
     DoctorScreen {
         layout: vertical;
-        background: $background;
+        background: #0F111A;
     }
     DoctorScreen > #dr-title {
         height: 1;
-        background: $panel;
+        background: #0F111A;
         padding: 0 1;
-        color: $accent;
+        color: #8BE9FD;
     }
     DoctorScreen > #dr-checks {
         height: 1fr;
@@ -39,7 +39,7 @@ class DoctorScreen(Screen):
     }
     DoctorScreen > #dr-footer-hint {
         height: 1;
-        color: $text-muted;
+        color: #6272A4;
         padding: 0 1;
     }
     """

@@ -18,13 +18,13 @@ class StatusScreen(Screen):
     DEFAULT_CSS = """
     StatusScreen {
         layout: vertical;
-        background: $background;
+        background: #0F111A;
     }
     StatusScreen > #st-title {
         height: 1;
-        background: $panel;
+        background: #0F111A;
         padding: 0 1;
-        color: $accent;
+        color: #8BE9FD;
     }
     StatusScreen > StatusStrip {
         height: 1;

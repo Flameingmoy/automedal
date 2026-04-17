@@ -20,17 +20,17 @@ class SelectCompetitionScreen(Screen):
     DEFAULT_CSS = """
     SelectCompetitionScreen {
         layout: vertical;
-        background: $background;
+        background: #0F111A;
     }
     SelectCompetitionScreen > #sc-title {
         height: 1;
-        background: $panel;
+        background: #0F111A;
         padding: 0 1;
-        color: $accent;
+        color: #8BE9FD;
     }
     SelectCompetitionScreen > #sc-hint {
         height: 1;
-        color: $text-muted;
+        color: #6272A4;
         padding: 0 1;
     }
     SelectCompetitionScreen > DataTable {

@@ -31,13 +31,13 @@ class InitProgressScreen(Screen):
     DEFAULT_CSS = """
     InitProgressScreen {
         layout: vertical;
-        background: $background;
+        background: #0F111A;
     }
     InitProgressScreen > #ip-title {
         height: 1;
-        background: $panel;
+        background: #0F111A;
         padding: 0 1;
-        color: $accent;
+        color: #8BE9FD;
     }
     InitProgressScreen > #ip-steps {
         height: auto;
@@ -46,7 +46,7 @@ class InitProgressScreen(Screen):
     InitProgressScreen > #ip-log {
         height: 1fr;
         margin: 0 1;
-        border: round $panel;
+        border: round #6272A4;
     }
     """
 

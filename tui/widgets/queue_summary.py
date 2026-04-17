@@ -32,8 +32,8 @@ def _parse_pending(text: str, limit: int = 5) -> list[dict]:
 
 class QueueSummary(Vertical):
     DEFAULT_CSS = """
-    QueueSummary { height: 8; border: round $panel; padding: 0 1; }
-    QueueSummary > #qs-title { height: 1; color: $accent; }
+    QueueSummary { height: 8; border: round #6272A4; padding: 0 1; background: #0F111A; }
+    QueueSummary > #qs-title { height: 1; color: #8BE9FD; }
     QueueSummary > #qs-body  { height: 6; }
     """
 

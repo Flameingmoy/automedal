@@ -16,7 +16,7 @@ MEDALS = ("🥇", "🥈", "🥉")
 class Leaderboard(Vertical):
     DEFAULT_CSS = """
     Leaderboard { height: 1fr; padding: 0 1; }
-    Leaderboard > #lb-title { height: 1; color: $accent; }
+    Leaderboard > #lb-title { height: 1; color: #8BE9FD; }
     Leaderboard > #lb-body { height: 1fr; }
     """
 

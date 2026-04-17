@@ -11,8 +11,8 @@ from tui.state import AppState
 
 class RecentActivity(Vertical):
     DEFAULT_CSS = """
-    RecentActivity { height: 9; border: round $panel; padding: 0 1; }
-    RecentActivity > #ra-title { height: 1; color: $accent; }
+    RecentActivity { height: 9; border: round #6272A4; padding: 0 1; background: #0F111A; }
+    RecentActivity > #ra-title { height: 1; color: #8BE9FD; }
     RecentActivity > #ra-body  { height: 7; }
     """
 

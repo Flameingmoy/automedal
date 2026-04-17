@@ -19,7 +19,7 @@ class SpritePanel(Vertical):
     SpritePanel { height: 1fr; padding: 0 1; }
     SpritePanel > #sprite-art { height: 1fr; }
     SpritePanel > #sprite-label { height: 1; content-align: center middle; }
-    SpritePanel > #sprite-sub { height: 1; content-align: center middle; color: $text-muted; }
+    SpritePanel > #sprite-sub { height: 1; content-align: center middle; color: #6272A4; }
     """
 
     def __init__(self, theme: Theme = DEFAULT_THEME, **kw) -> None:

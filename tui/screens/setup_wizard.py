@@ -28,13 +28,13 @@ class SetupWizardScreen(Screen):
     DEFAULT_CSS = """
     SetupWizardScreen {
         layout: vertical;
-        background: $background;
+        background: #0F111A;
     }
     SetupWizardScreen > #sw-title {
         height: 1;
-        background: $panel;
+        background: #0F111A;
         padding: 0 1;
-        color: $accent;
+        color: #8BE9FD;
     }
     SetupWizardScreen > #sw-body {
         height: 1fr;
@@ -48,7 +48,7 @@ class SetupWizardScreen(Screen):
     SetupWizardScreen #sw-key-label { height: 1; margin: 1 0 0 0; }
     SetupWizardScreen #sw-key { height: 3; }
     SetupWizardScreen #sw-submit { margin: 1 0; }
-    SetupWizardScreen #sw-status { height: 3; color: $accent; }
+    SetupWizardScreen #sw-status { height: 3; color: #8BE9FD; }
     """
 
     BINDINGS = [

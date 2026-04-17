@@ -12,26 +12,26 @@ from tui.widgets.recent_activity import RecentActivity
 from tui.widgets.status_strip import StatusStrip
 
 
-_QUICK_HELP = (
-    "  [r] run 50  [d] discover  [i] init <slug>  [s] status  "
-    "[q] quit  [Tab] autocomplete"
-)
-
-
 class HomeScreen(Screen):
     """Landing page with status strip, recent activity, and command palette."""
 
     DEFAULT_CSS = """
     HomeScreen {
         layout: vertical;
-        background: $background;
+        background: #0F111A;
     }
-    HomeScreen > #home-help {
-        height: 1;
-        color: $text-muted;
-        background: $panel;
+    HomeScreen > #home-logo {
+        height: auto;
+        padding: 1 1 0 1;
+        color: #FFD700;
+    }
+    HomeScreen > #home-logo.hidden { display: none; }
+    HomeScreen > #home-banner {
+        height: auto;
+        color: #FFD700;
         padding: 0 1;
     }
+    HomeScreen > #home-banner.hidden { display: none; }
     HomeScreen > RecentActivity {
         margin: 1 1 0 1;
     }
@@ -41,22 +41,37 @@ class HomeScreen(Screen):
     """
 
     BINDINGS = [
-        ("r", "quick_run",      "Run"),
-        ("d", "quick_discover", "Discover"),
-        ("i", "quick_init",     "Init"),
-        ("s", "quick_status",   "Status"),
-        ("q", "quit",           "Quit"),
+        ("ctrl+q", "quit", "Quit"),
     ]
 
     def compose(self) -> ComposeResult:
+        yield Static("", id="home-logo")
         yield StatusStrip(id="home-status")
-        yield Static(_QUICK_HELP, id="home-help")
+        yield Static("", id="home-banner", classes="hidden")
         yield RecentActivity(id="home-recent")
         yield CommandInput(id="home-cmd")
         yield Footer()
 
     def on_mount(self) -> None:
+        self._render_logo()
         self.call_after_refresh(self._check_first_run)
+
+    def _render_logo(self) -> None:
+        try:
+            from rich_pixels import Pixels
+            from tui.assets.logo.generate_logo import ensure_logo
+            logo_path = ensure_logo()
+            if logo_path.exists():
+                self.query_one("#home-logo", Static).update(
+                    Pixels.from_image_path(str(logo_path))
+                )
+                return
+        except Exception:
+            pass
+        try:
+            self.query_one("#home-logo", Static).update("A U T O M E D A L")
+        except Exception:
+            pass
 
     def _check_first_run(self) -> None:
         """Auto-push setup wizard on first run (no provider configured)."""
@@ -64,9 +79,9 @@ class HomeScreen(Screen):
         try:
             from automedal.dispatch import _needs_setup
             if _needs_setup(dict(os.environ)):
-                self.query_one("#home-help", Static).update(
-                    "  [yellow]First run detected — let's set up a provider[/]"
-                )
+                banner = self.query_one("#home-banner", Static)
+                banner.update("First run detected — let's set up a provider")
+                banner.remove_class("hidden")
                 self.app.spawn_command("setup", [])
         except ImportError:
             pass
@@ -80,8 +95,6 @@ class HomeScreen(Screen):
             self.query_one("#home-recent", RecentActivity).update_state(state)
         except Exception:
             pass
-
-    # ── command input handling ─────────────────────────────────────────────
 
     def on_command_input_submitted(self, event: CommandInput.Submitted) -> None:
         self._dispatch_text(event.value)
@@ -100,31 +113,5 @@ class HomeScreen(Screen):
         else:
             self.app.spawn_command(cmd, args)
 
-    # ── quick-action keybindings ───────────────────────────────────────────
-
-    def action_quick_run(self) -> None:
-        self._prefill("run 50")
-
-    def action_quick_discover(self) -> None:
-        self.app.spawn_command("discover", [])
-
-    def action_quick_init(self) -> None:
-        self._prefill("init ")
-
-    def action_quick_status(self) -> None:
-        self.app.spawn_command("status", [])
-
     def action_quit(self) -> None:
         self.app.exit()
-
-    def _prefill(self, text: str) -> None:
-        """Put text into the command input and focus it."""
-        try:
-            inp = self.query_one("#home-cmd", CommandInput)
-            from textual.widgets import Input
-            i = inp.query_one("#ci-input", Input)
-            i.value = text
-            i.cursor_position = len(text)
-            i.focus()
-        except Exception:
-            pass

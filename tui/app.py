@@ -56,9 +56,11 @@ class AutoMedalApp(App):
         log_file: Optional[Path] = None,
         demo_fixture: Optional[Path] = None,
         start_dashboard: bool = False,
+        auto_spawn: Optional[tuple[str, list[str]]] = None,
     ) -> None:
         super().__init__()
         self.repo_root = repo_root
+        self.auto_spawn = auto_spawn
 
         # Resolve paths via Layout when available
         try:
@@ -101,6 +103,17 @@ class AutoMedalApp(App):
 
         self._start_sources()
         self.set_interval(1.0, self._heartbeat)
+
+        if self.auto_spawn is not None:
+            needs_setup = False
+            try:
+                from automedal.dispatch import _needs_setup
+                needs_setup = _needs_setup(dict(os.environ))
+            except ImportError:
+                pass
+            if not needs_setup:
+                cmd, cmd_args = self.auto_spawn
+                self.call_after_refresh(lambda: self.spawn_command(cmd, list(cmd_args)))
 
     def _start_sources(self) -> None:
         loop = asyncio.get_event_loop()
