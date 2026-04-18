@@ -20,7 +20,12 @@
 
 AutoMedal is an autonomous experiment loop for tabular ML competitions. It uses a coding agent to try different models, feature engineering, hyperparameters, ensembles, and literature-inspired ideas — keeping only what improves the score.
 
-The harness is **agent-agnostic**: the default stack is [pi coding agent](https://github.com/badlogic/pi-mono) driving MiniMax M2.7 through an [OpenCode Go](https://opencode.ai) API key, but any provider pi supports (OpenRouter, Ollama, Anthropic, OpenAI, Groq, Gemini) works with zero code changes.
+The harness ships with two interchangeable agent runtimes behind the `AUTOMEDAL_AGENT` flag:
+
+- **`deepagents`** (Python, [LangChain deepagents](https://github.com/langchain-ai/deepagents)) — pure-pip, no Node dependency, direct access to Anthropic / OpenAI / OpenRouter / Groq / Mistral / Gemini / opencode-go / Ollama. Recommended for new installs.
+- **`pi`** (default until Phase D, [pi coding agent](https://github.com/badlogic/pi-mono)) — Node-based, same provider list, kept for baseline continuity. Auto-installed on first run.
+
+Both paths run the same three-phase loop, write the same log format, and read the same file-based memory. Flip between them with `AUTOMEDAL_AGENT=deepagents` (or `=pi`).
 
 Adapted from [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) — same philosophy (edit, train, check, keep/revert), but targeting tabular ML competitions instead of LLM pretraining.
 
@@ -30,7 +35,7 @@ Each iteration of the loop dispatches up to three agent phases. Each phase is a 
 
 ```
              ┌──────────────────────────────────────────────┐
-             │              run.sh  (loop)                  │
+             │   run.sh (pi) or automedal.run_loop (deep)   │
              │   stagnation · tag · log · dispatch phases   │
              └──────────┬──────────┬───────────┬────────────┘
                         │          │           │
@@ -74,15 +79,16 @@ State lives in **git-tracked markdown files**, not in conversation memory. The a
 ## Requirements
 
 - **GPU**: NVIDIA GPU with CUDA support (tested on RTX 4070 Ti Super, 16 GB VRAM)
-- **Python**: 3.10 - 3.12
-- **Node.js**: ≥ 22 (for the bundled pi coding agent — auto-installed on first run)
+- **Python**: 3.11 - 3.13
+- **Node.js**: ≥ 22 — **only** required for the legacy `AUTOMEDAL_AGENT=pi` path. The default-future `deepagents` runtime is pure Python.
 - **[uv](https://docs.astral.sh/uv/)**: Python dependency management
 - **API key** for any [supported provider](#providers) (OpenCode Go recommended)
 - **Kaggle credentials** at `~/.kaggle/kaggle.json` ([get one here](https://www.kaggle.com/settings))
 
 ```bash
 pip install automedal        # or: pipx install automedal
-# pi is auto-installed from npm on first run — no separate npm install needed
+# deepagents ships as a pip dependency — zero Node required.
+# The legacy pi coding agent is auto-installed from npm only when AUTOMEDAL_AGENT=pi.
 ```
 
 For development (running from this repo):
@@ -106,7 +112,9 @@ uv sync --extra automl     # AutoGluon for the Experimenter
 automedal setup
 ```
 
-Interactive TUI wizard: choose a provider, paste your API key (hidden input), stores it in pi's auth config at `~/.pi/agent/auth.json`, and runs a smoke test. Any `automedal` command besides `setup`, `help`, and `doctor` is gated behind this step.
+Interactive wizard: choose a provider, paste your API key (hidden input), stored in a dotenv file at `~/.automedal/.env` (mode 0600), and runs a smoke test via the deepagents runtime. Any `automedal` command besides `setup`, `help`, and `doctor` is gated behind this step.
+
+If you already have a legacy `~/.pi/agent/auth.json` from v1.0, setup offers a one-shot import.
 
 If you prefer to manage keys yourself, export the env var directly (e.g. `export OPENCODE_API_KEY=sk-...`) and skip `automedal setup` — env vars take precedence.
 
@@ -231,29 +239,32 @@ All commands work from both the TUI command palette and the shell:
 
 ## Providers
 
-Because pi is provider-agnostic, so is AutoMedal. Switch at runtime with a single env var — no code changes:
+Both agent runtimes (`pi` and `deepagents`) are provider-agnostic. Switch at runtime with a single env var — no code changes:
 
 | Provider | Env var | Example model slug | Notes |
 |----------|---------|-------------------|-------|
-| **OpenCode Go** (default) | `OPENCODE_API_KEY` | `opencode-go/minimax-m2.7` | One key unlocks GLM-5.1, Kimi K2.5, MiMo, MiniMax M2.5/2.7 |
-| OpenRouter | `OPENROUTER_API_KEY` | `openrouter/<model>` | Free-tier models available; aggregates many providers |
-| Ollama (local) | — | `ollama/<local-model>` | No key, no cloud — runs on your own GPU |
+| **OpenCode Go** (default) | `OPENCODE_API_KEY` | `opencode-go/minimax-m2.7` | One key unlocks GLM-5.1, Kimi K2.5, MiMo, MiniMax M2.5/2.7. Routed through `ChatAnthropic` in the deepagents runtime. |
+| OpenRouter | `OPENROUTER_API_KEY` | `openrouter/openai/gpt-4o-mini` | Free-tier models available; aggregates many providers |
+| Ollama (local) | `OLLAMA_HOST` | `ollama/llama3.2` | No cloud — runs on your own GPU. Set `OLLAMA_HOST=http://localhost:11434` |
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-sonnet-4-5` | Direct Claude access |
 | OpenAI | `OPENAI_API_KEY` | `openai/gpt-4o` | Direct GPT access |
-| Groq | `GROQ_API_KEY` | `groq/<model>` | Fast inference |
-| Google Gemini | `GEMINI_API_KEY` | `google/gemini-*` | |
+| Groq | `GROQ_API_KEY` | `groq/llama-3.3-70b-versatile` | Fast inference |
+| Mistral | `MISTRAL_API_KEY` | `mistral/mistral-large-latest` | |
+| Google Gemini | `GEMINI_API_KEY` | `gemini/gemini-2.0-flash-exp` | |
 
 ```bash
-MODEL="openrouter/free-model" automedal run 50
+MODEL="openrouter/openai/gpt-4o-mini" automedal run 50
+AUTOMEDAL_AGENT=deepagents automedal run 50        # explicit Python runtime
 ```
 
 ## Configuration
 
-`run.sh` (and therefore `automedal run`) honors these env vars:
+Both loop entry points (`run.sh` for pi, `python -m automedal.run_loop` for deepagents) honor the same env vars:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MODEL` | `opencode-go/minimax-m2.7` | Any `<provider>/<model-id>` slug pi recognizes |
+| `AUTOMEDAL_AGENT` | `pi` | Agent runtime selector: `pi` (Node) or `deepagents` (Python). `pi` is default until Phase D. |
+| `MODEL` | `opencode-go/minimax-m2.7` | Any `<provider>/<model-id>` slug from the [providers table](#providers) |
 | `STAGNATION_K` | `3` | Trigger Researcher + Strategist after K non-improving runs |
 | `RESEARCH_EVERY` | `10` | Scheduled Researcher cadence (set `0` to disable) |
 | `COOLDOWN_SECS` | `1` | Seconds to pause between iterations (0 to disable) |
@@ -271,12 +282,15 @@ AUTOMEDAL_REGRESSION_GATE=strict automedal run 50
 ```
 automedal/               Installed package (entry point + dispatch)
 ├── cli.py               `automedal` console script entry point
-├── dispatch.py          One Python function per subcommand
+├── dispatch.py          One Python function per subcommand — reads AUTOMEDAL_AGENT
 ├── paths.py             Layout class — resolves all paths for dev/user mode
-├── pi_runtime.py        ensure_pi() — detects/installs pi into _vendor/
+├── auth.py              ~/.automedal/.env store + legacy pi-auth importer
+├── agent_runtime.py     LangChain deepagents: model factory, path-gated tools, phase agents, smoke test
+├── run_loop.py          Three-phase loop (Python) — invoked when AUTOMEDAL_AGENT=deepagents
+├── pi_runtime.py        ensure_pi() — detects/installs pi into _vendor/ (legacy path only)
 └── _vendor/             pi npm package (auto-populated on first run, gitignored)
 
-run.sh                   Three-phase automation loop (invoked by dispatch)
+run.sh                   Three-phase loop (bash) — legacy pi path; exec's run_loop.py when flag=deepagents
 config_loader.py         Loads configs/competition.yaml
 
 harness/                 Deterministic automation (Python, no LLM)
@@ -286,8 +300,8 @@ harness/                 Deterministic automation (Python, no LLM)
 ├── verify_iteration.py  Post-phase invariant checker + regression gate + success_criteria
 ├── build_trace_trailer.py  Reflective trace builder (last N journals → markdown block)
 ├── rank_journals.py     Learning-value ranker (score + diversity → top-K summary)
-├── compact_memory.py    Memory compaction (size check → pi call → archive)
-└── stream_events.py     Pi JSON event stream → terminal output
+├── compact_memory.py    Memory compaction (size check → agent call → archive)
+└── stream_events.py     Shared event formatter — pi JSON (stdin) + LangGraph v2 (in-process)
 
 scout/                   Competition discovery + bootstrap pipeline
 ├── discover.py          List and rank active Kaggle competitions
@@ -332,12 +346,14 @@ tui/                     Textual TUI (home screen + dashboard + per-command scre
 ├── assets/sprites/      text_fallback.py (ASCII glyphs when Pillow unavailable)
 └── sprite_loader.py     load_sprite() — PNG from ~/.automedal/sprites/ or generated glyph
 
-tests/                   pytest suite (62 tests)
+tests/                   pytest suite (85 tests)
 ├── test_paths.py        Layout dev/user mode path resolution
 ├── test_pi_runtime.py   ensure_pi() mock-npm tests
 ├── test_phase_machine.py  State reducer
 ├── test_log_parser.py   Log line parser
-└── test_sprite_loader.py  Sprite fallback
+├── test_sprite_loader.py  Sprite fallback
+├── test_auth.py         ~/.automedal/.env store + pi-auth migration
+└── test_agent_runtime.py  Path-guarded tools + slug parsing + prompt loading
 ```
 
 ### User's project directory (after `automedal init <slug>`)
@@ -418,7 +434,8 @@ This wipes `data/` of the old competition's files, pulls the new data, resets th
 
 | Problem | Fix |
 |---------|-----|
-| `automedal setup` smoke test fails with "unauthorized" | Key didn't persist. Run `automedal doctor` to check `~/.pi/agent/auth.json`, or `export OPENCODE_API_KEY=sk-...` as a fallback |
+| `automedal setup` smoke test fails with "unauthorized" | Key didn't persist. Run `automedal doctor` to check `~/.automedal/.env`, or `export OPENCODE_API_KEY=sk-...` as a fallback |
+| Installed on a fresh machine with no Node | Set `AUTOMEDAL_AGENT=deepagents` — the Python runtime needs no Node at all |
 | `automedal` says "not configured yet" but env var is set | Make sure you exported it in the *same* shell session |
 | `scout/bootstrap.py` reports low schema sniff confidence | TUI will prompt; in shell, pass `--yes` to continue or `--abort-on-warning` to abort |
 | Strategist queues 5 entries on the same axis | `verify_iteration.py` will warn; fix `experiment_queue.md` by hand or delete it |
@@ -434,4 +451,4 @@ Based on [autoresearch](https://github.com/karpathy/autoresearch) by Andrej Karp
 
 ## License
 
-MIT
+MIT. See [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md) for attribution of bundled / depended-upon third-party software (deepagents, langchain, langgraph, rich-pixels, pi coding agent).
