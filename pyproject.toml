@@ -20,7 +20,7 @@ name = "automedal"
 version = "1.0.0"
 description = "Autonomous Kaggle ML research — one install, one command"
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     # Core ML
     "numpy>=1.26",
@@ -66,6 +66,14 @@ dependencies = [
     "textual-plotext>=1.0",
     "watchdog>=4.0",
     "pillow>=10",
+
+    # Agent runtime — LangChain deepagents (replaces pi coding agent)
+    "deepagents>=0.5.3",
+    "langchain>=0.3",
+    "langchain-anthropic>=1.4",
+    "langchain-openai>=1.1",
+    "langgraph>=1.0",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -84,7 +92,12 @@ tui-gpu = [
 # Test runner
 test = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
 ]
+# Legacy pi-coding-agent path (reachable via AUTOMEDAL_AGENT=pi until Phase E)
+pi = []
+# Minimal install (Ollama-only users who don't need Anthropic/OpenAI clients)
+slim = []
 
 [project.scripts]
 automedal = "automedal.cli:main"

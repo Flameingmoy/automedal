@@ -14,6 +14,13 @@
 
 set -euo pipefail
 
+# ── Feature flag: AUTOMEDAL_AGENT={pi,deepagents} ─────────────────────────────
+# Default remains `pi` until Phase D; set AUTOMEDAL_AGENT=deepagents to run the
+# pure-Python LangChain deepagents loop instead (no Node required).
+if [[ "${AUTOMEDAL_AGENT:-pi}" == "deepagents" ]]; then
+    exec python -m automedal.run_loop "$@"
+fi
+
 MAX_ITERATIONS=${1:-50}
 FAST_MODE=${2:-""}
 

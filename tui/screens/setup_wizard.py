@@ -16,11 +16,14 @@ from tui.state import AppState
 
 
 _PROVIDERS = [
-    ("opencode-go",  "OPENCODE_API_KEY",   "opencode-go/minimax-m2.7",     True),
-    ("openrouter",   "OPENROUTER_API_KEY",  "openrouter/<your-model>",       True),
-    ("ollama",       "",                    "ollama/<local-model>",           False),
-    ("anthropic",    "ANTHROPIC_API_KEY",   "anthropic/claude-sonnet-4-5",   True),
-    ("openai",       "OPENAI_API_KEY",      "openai/gpt-4o",                 True),
+    ("opencode-go",  "OPENCODE_API_KEY",   "opencode-go/minimax-m2.7",      True),
+    ("openrouter",   "OPENROUTER_API_KEY",  "openrouter/openai/gpt-4o-mini", True),
+    ("ollama",       "",                    "ollama/llama3.2",                False),
+    ("anthropic",    "ANTHROPIC_API_KEY",   "anthropic/claude-sonnet-4-5",    True),
+    ("openai",       "OPENAI_API_KEY",      "openai/gpt-4o",                  True),
+    ("groq",         "GROQ_API_KEY",        "groq/llama-3.3-70b-versatile",   True),
+    ("mistral",      "MISTRAL_API_KEY",     "mistral/mistral-large-latest",   True),
+    ("gemini",       "GEMINI_API_KEY",      "gemini/gemini-2.0-flash-exp",    True),
 ]
 
 
@@ -109,36 +112,42 @@ class SetupWizardScreen(Screen):
             status.update("  [red]API key required for this provider[/]")
             return
 
-        # Write auth
+        # Persist the provider credential via the new ~/.automedal/.env store
         if needs_key and apikey:
             try:
-                from automedal.dispatch import _write_auth_json
-                auth_path = _write_auth_json(provider, apikey)
-                status.update(f"  ✓ Saved {provider} key to {auth_path}\n  Running smoke test…")
+                from automedal.auth import save_key
+                path = await asyncio.get_event_loop().run_in_executor(
+                    None, save_key, provider, apikey
+                )
+                status.update(f"  ✓ Saved {provider} key to {path}\n  Running smoke test…")
             except Exception as exc:
                 status.update(f"  [red]Error saving auth: {exc}[/]")
                 return
+        elif not needs_key:
+            status.update(f"  (no key needed for {provider})\n  Running smoke test…")
 
-        # Smoke test in worker so we don't block the event loop
+        # Smoke test via the deepagents runtime — works for both agent modes
+        from automedal import agent_runtime as ar
         try:
-            env_key = self.app._layout.as_env() if hasattr(self.app, "_layout") and self.app._layout else {}
-            pi_bin = env_key.get("AUTOMEDAL_PI_BIN", "pi")
-        except Exception:
-            pi_bin = "pi"
-
-        from automedal.dispatch import _smoke_test
-        passed = await asyncio.get_event_loop().run_in_executor(
-            None, _smoke_test, pi_bin, default_model
+            prov, short = ar.parse_slug(default_model)
+        except ValueError:
+            prov, short = provider, default_model
+        ok, detail = await asyncio.get_event_loop().run_in_executor(
+            None, ar.smoke_test, prov, short
         )
 
-        if passed:
+        if ok:
             status.update(
-                f"  [green]✓ Setup complete[/]\n  Provider: {provider}\n  Smoke test: READY"
+                f"  [green]✓ Setup complete[/]\n"
+                f"  Provider: {provider}\n"
+                f"  Smoke test: {detail}"
             )
         else:
             status.update(
-                f"  [yellow]⚠  Setup saved but smoke test did not respond READY[/]\n"
-                f"  Provider: {provider} — run 'automedal doctor' for details"
+                f"  [yellow]⚠  Setup saved but smoke test failed[/]\n"
+                f"  Provider: {provider}\n"
+                f"  {detail}\n"
+                f"  Run 'automedal doctor' for details."
             )
 
     def update_state(self, state: AppState) -> None:
