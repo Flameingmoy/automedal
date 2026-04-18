@@ -14,6 +14,13 @@ from pathlib import Path
 
 from automedal.auth import load_env
 
+# Cap CPU thread pools so local training doesn't thrash the host.
+# LLM work is remote; XGBoost/LightGBM/sklearn otherwise default to all cores.
+for _k, _v in (("OMP_NUM_THREADS", "4"), ("MKL_NUM_THREADS", "4"),
+               ("OPENBLAS_NUM_THREADS", "4"), ("NUMEXPR_NUM_THREADS", "4"),
+               ("VECLIB_MAXIMUM_THREADS", "4")):
+    os.environ.setdefault(_k, _v)
+
 # Populate os.environ from ~/.automedal/.env before any command inspects it.
 # Safe no-op when the file doesn't exist (first run).
 load_env()

@@ -2,16 +2,32 @@
 
 from __future__ import annotations
 
+import re
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.suggester import SuggestFromList
 from textual.widgets import Input, Static
 
 COMMANDS = [
     "run", "init", "discover", "select", "doctor", "status",
     "clean", "prepare", "render", "setup", "help", "quit",
 ]
+
+_TRAILING_DIGITS = re.compile(r"^([a-zA-Z]+)(\d+)$")
+
+
+def normalize(text: str) -> str:
+    """Forgiving parser: 'run30' → 'run 30'; leaves 'run 30' untouched."""
+    text = text.strip()
+    if not text:
+        return text
+    first, _, rest = text.partition(" ")
+    m = _TRAILING_DIGITS.match(first)
+    if m and m.group(1).lower() in COMMANDS:
+        fixed = f"{m.group(1)} {m.group(2)}"
+        return f"{fixed} {rest}".strip() if rest else fixed
+    return text
 
 
 class CommandInput(Vertical):
@@ -41,9 +57,8 @@ class CommandInput(Vertical):
         with Horizontal(id="ci-row"):
             yield Static(">", id="ci-prompt")
             yield Input(
-                placeholder="type a command…",
+                placeholder="type a command (e.g. run 30)",
                 id="ci-input",
-                suggester=SuggestFromList(COMMANDS, case_sensitive=False),
             )
         yield Static(f"  {'  '.join(COMMANDS[:6])}", id="ci-hints")
 
@@ -51,7 +66,7 @@ class CommandInput(Vertical):
         self.query_one("#ci-input", Input).focus()
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        text = event.value or ""
+        text = normalize(event.value or "")
         word = (text.split() or [""])[0].lower()
         if not word:
             hint = "  ".join(COMMANDS[:6])
@@ -65,7 +80,7 @@ class CommandInput(Vertical):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
-        value = event.value.strip()
+        value = normalize(event.value)
         if value:
             self.post_message(self.Submitted(value))
             inp = self.query_one("#ci-input", Input)
@@ -82,12 +97,12 @@ class CommandInput(Vertical):
 
     def _autocomplete(self) -> None:
         inp = self.query_one("#ci-input", Input)
-        text = inp.value.strip()
+        text = normalize(inp.value)
         if not text:
             return
-        word = text.split()[0].lower()
+        first, _, rest = text.partition(" ")
+        word = first.lower()
         matches = [c for c in COMMANDS if c.startswith(word)]
         if len(matches) == 1:
-            rest = text[len(word):]
-            inp.value = matches[0] + rest
+            inp.value = matches[0] + (f" {rest}" if rest else "")
             inp.cursor_position = len(inp.value)

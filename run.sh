@@ -31,6 +31,17 @@ TRAIN_BUDGET_MINUTES=${TRAIN_BUDGET_MINUTES:-10}
 export TRAIN_BUDGET_MINUTES
 MODEL=${MODEL:-"opencode-go/minimax-m2.7"}
 
+# ── CPU thread caps ──────────────────────────────────────────────────────────
+# The LLM work runs remotely (opencode-go). Local training (train.py) calls
+# XGBoost / LightGBM / sklearn / numpy, each of which defaults OMP/BLAS to the
+# full core count. On a 16-thread host that means 3 libraries × 16 threads
+# fighting the scheduler. Cap to 4 unless the user explicitly overrides.
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+export MKL_NUM_THREADS=${MKL_NUM_THREADS:-4}
+export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-4}
+export NUMEXPR_NUM_THREADS=${NUMEXPR_NUM_THREADS:-4}
+export VECLIB_MAXIMUM_THREADS=${VECLIB_MAXIMUM_THREADS:-4}
+
 # ── Path resolution via Layout env vars (set by automedal/dispatch.py) ───────
 # All paths fall back to the flat-repo defaults so `bash run.sh N` from the
 # repo root still works exactly as before (dev mode).

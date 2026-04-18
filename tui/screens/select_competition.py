@@ -59,7 +59,7 @@ class SelectCompetitionScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Static("Select a competition  (Enter to bootstrap, q to cancel)", id="sc-title")
         yield Static("", id="sc-hint")
-        yield DataTable(id="sc-table", cursor_type="row")
+        yield DataTable(id="sc-table", cursor_type="none")
         yield Static("", id="sc-status")
         yield Footer()
 
@@ -115,6 +115,7 @@ class SelectCompetitionScreen(Screen):
             f"  {len(self._candidates)} competitions loaded — use ↑↓ to navigate"
         )
         if self._candidates:
+            table.cursor_type = "row"
             table.focus()
 
     def action_select_row(self) -> None:

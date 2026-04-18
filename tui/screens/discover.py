@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -12,6 +13,14 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, RichLog, Static
 
 from tui.state import AppState
+
+_ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]|\x1B\][^\x07]*\x07")
+
+
+def _clean(line: str) -> str:
+    """Strip ANSI and unprintable control chars before rendering."""
+    line = _ANSI_RE.sub("", line)
+    return "".join(ch for ch in line if ch == "\t" or ch >= " ")
 
 
 class DiscoverScreen(Screen):
@@ -60,8 +69,8 @@ class DiscoverScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Static("Discover competitions", id="dc-title")
         yield Static("  Running discover…  (s=select, r=re-run, q=back)", id="dc-hint")
-        yield DataTable(id="dc-table", cursor_type="row")
-        yield RichLog(id="dc-log", markup=False, highlight=False, wrap=True)
+        yield DataTable(id="dc-table", cursor_type="none")
+        yield RichLog(id="dc-log", markup=False, highlight=False, wrap=True, max_lines=500)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -78,10 +87,13 @@ class DiscoverScreen(Screen):
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                env={**__import__("os").environ, "PYTHONUNBUFFERED": "1", "NO_COLOR": "1"},
             )
             assert self._proc.stdout is not None
             async for raw in self._proc.stdout:
-                log.write(raw.decode(errors="replace").rstrip())
+                text = _clean(raw.decode(errors="replace").rstrip())
+                if text:
+                    log.write(text)
             await self._proc.wait()
         except Exception as exc:
             log.write(f"[error] {exc}")
@@ -113,6 +125,7 @@ class DiscoverScreen(Screen):
 
         table = self.query_one("#dc-table", DataTable)
         table.clear()
+        table.cursor_type = "row" if self._candidates else "none"
         for i, c in enumerate(self._candidates, 1):
             comp = c["competition"]
             table.add_row(

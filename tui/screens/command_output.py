@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 import sys
 
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import Footer, RichLog, Static
+
+_ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]|\x1B\][^\x07]*\x07")
+
+
+def _clean(line: str) -> str:
+    line = _ANSI_RE.sub("", line)
+    return "".join(ch for ch in line if ch == "\t" or ch >= " ")
 
 
 class CommandOutputScreen(Screen):
@@ -60,11 +69,13 @@ class CommandOutputScreen(Screen):
                 *cmd_args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                env={**os.environ, "PYTHONUNBUFFERED": "1", "NO_COLOR": "1"},
             )
             assert self._proc.stdout is not None
             async for raw in self._proc.stdout:
-                line = raw.decode(errors="replace").rstrip()
-                log.write(line)
+                line = _clean(raw.decode(errors="replace").rstrip())
+                if line:
+                    log.write(line)
             await self._proc.wait()
         except Exception as exc:
             log.write(f"[error] {exc}")

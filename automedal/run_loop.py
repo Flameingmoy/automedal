@@ -34,6 +34,15 @@ from automedal.auth import load_env
 
 # ── Initialization ───────────────────────────────────────────────────────────
 
+# Cap CPU thread pools before any ML library import. LLM work is remote
+# (opencode-go); local train.py uses XGBoost/LightGBM/sklearn which each
+# default OMP/BLAS to the full core count. Three libs × 16 threads thrashes
+# a 16-thread host. User can override by exporting these before launch.
+for _k, _v in (("OMP_NUM_THREADS", "4"), ("MKL_NUM_THREADS", "4"),
+               ("OPENBLAS_NUM_THREADS", "4"), ("NUMEXPR_NUM_THREADS", "4"),
+               ("VECLIB_MAXIMUM_THREADS", "4")):
+    os.environ.setdefault(_k, _v)
+
 # Load ~/.automedal/.env BEFORE importing agent_runtime so OPENCODE_API_KEY etc.
 # are present when build_model() is first called.
 load_env()
