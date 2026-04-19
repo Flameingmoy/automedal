@@ -13,7 +13,6 @@ from tui.bus import EventBus
 from tui.sources.log_tail import (
     _classify_marker,
     _strip_ansi,
-    _try_parse_pi_json,
     ITER_END_RE,
     ITER_START_RE,
     TRAINING_DONE_RE,
@@ -59,12 +58,6 @@ async def run(bus: EventBus, fixture_path: Path, *, line_delay: float = 0.04) ->
             if mk is not None:
                 bus.publish_nowait(mk)
                 bus.publish_nowait(RawLine(text=stripped, ts=time.time()))
-                await asyncio.sleep(line_delay)
-                continue
-            summary = _try_parse_pi_json(stripped)
-            if summary is not None:
-                if summary:
-                    bus.publish_nowait(RawLine(text=summary, ts=time.time()))
                 await asyncio.sleep(line_delay)
                 continue
             bus.publish_nowait(RawLine(text=stripped, ts=time.time()))

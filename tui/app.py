@@ -20,7 +20,15 @@ from tui.state import AppState, PhaseMachine
 from tui.themes import tcss_path
 from tui.themes.palette import DEFAULT_THEME
 
-from tui.sources import log_tail, journal, results as results_src, memory, gpu, demo as demo_src
+from tui.sources import (
+    log_tail,
+    events_jsonl,
+    journal,
+    results as results_src,
+    memory,
+    gpu,
+    demo as demo_src,
+)
 
 
 def _load_competition_info(config_yaml: Path) -> CompetitionInfo:
@@ -124,6 +132,13 @@ class AutoMedalApp(App):
         else:
             self._source_tasks.append(
                 loop.create_task(log_tail.run(self.bus, self.log_file))
+            )
+            events_path = Path(
+                os.environ.get("AUTOMEDAL_EVENTS_FILE")
+                or self.log_file.with_name("agent_loop.events.jsonl")
+            )
+            self._source_tasks.append(
+                loop.create_task(events_jsonl.run(self.bus, events_path))
             )
             self._source_tasks.append(
                 loop.create_task(journal.run(self.bus, self._journal_dir))
@@ -234,13 +249,6 @@ class AutoMedalApp(App):
         env = dict(os.environ)
         if self._layout is not None:
             env.update(self._layout.as_env())
-        pi_bin = env.get("AUTOMEDAL_PI_BIN", "")
-        if not pi_bin:
-            try:
-                from automedal.pi_runtime import ensure_pi
-                env["AUTOMEDAL_PI_BIN"] = str(ensure_pi())
-            except Exception:
-                pass
 
         # Spawn `python -m automedal run N` — dashboard tails the log file
         self._run_proc = await asyncio.create_subprocess_exec(

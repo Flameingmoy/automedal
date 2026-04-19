@@ -9,7 +9,6 @@ from tui.sources.log_tail import (
     _classify_marker,
     _parse_val_loss,
     _strip_ansi,
-    _try_parse_pi_json,
 )
 
 
@@ -91,17 +90,6 @@ def test_parse_val_loss_junk():
     assert _parse_val_loss("oops") is None
 
 
-def test_pi_json_tool_exec_start():
-    line = '{"type": "tool_execution_start", "toolName": "Bash", "args": {"command": "ls"}}'
-    out = _try_parse_pi_json(line)
-    assert out is not None and "[Bash]" in out and "ls" in out
-
-
-def test_pi_json_non_json():
-    assert _try_parse_pi_json("plain text") is None
-
-
-def test_pi_json_text_delta():
-    line = '{"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": "hello"}}'
-    out = _try_parse_pi_json(line)
-    assert out == "hello"
+def test_classify_analyzer():
+    m = _classify_marker("[harness] dispatching Analyzer (status=better)")
+    assert m is not None and m.kind == "analyzer"
