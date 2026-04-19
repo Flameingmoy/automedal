@@ -30,7 +30,7 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) 
 ### One-liner (recommended)
 
 ```bash
-curl -LsSf https://raw.githubusercontent.comFlameingmoy/automedal/main/install.sh | bash
+curl -LsSf https://raw.githubusercontent.com/Flameingmoy/automedal/main/install.sh | bash
 ```
 
 The installer verifies Python ≥ 3.11, installs `pipx` if needed, installs AutoMedal into an isolated `pipx` venv, and creates `~/.automedal/` (mode 0700) for credentials, logs, and sprites.
@@ -44,15 +44,15 @@ pipx upgrade automedal
 ### Direct pipx (equivalent)
 
 ```bash
-pipx install git+https://github.com/OWNER/REPO       # install
-pipx upgrade automedal                                # upgrade
-pipx uninstall automedal                              # remove
+pipx install git+https://github.com/Flameingmoy/automedal       # install
+pipx upgrade automedal                                          # upgrade
+pipx uninstall automedal                                        # remove
 ```
 
 ### From source (development)
 
 ```bash
-git clone https://github.com/OWNER/REPO automedal && cd automedal
+git clone https://github.com/Flameingmoy/automedal automedal && cd automedal
 pip install -e .                 # or: uv sync
 automedal --version
 ```
@@ -142,16 +142,16 @@ Each iteration is a sequence of short, **stateless** LLM calls. No single call l
 
 ```
 ┌─ AutoMedal · playground-s6e4 · val_loss 0.0503 · iter 24/50 ─────┐
-│                                                                   │
-│  ● recent activity                                                │
+│                                                                  │
+│  ● recent activity                                               │
 │    #24 irredundant-kfold-hpo   ✓  0.0503  (-0.0001)              │
 │    #23 catboost-depth-tune     ✗  0.0508                         │
 │    #22 lgbm-bagging            ✓  0.0504  (-0.0014)              │
-│                                                                   │
+│                                                                  │
 │  [r] run 50  [d] discover  [i] init  [s] status  [q] quit        │
-│                                                                   │
-│  > _                                    (type command, Enter)     │
-└───────────────────────────────────────────────────────────────────┘
+│                                                                  │
+│  > _                                    (type command, Enter)    │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 | Key / command | Action |
