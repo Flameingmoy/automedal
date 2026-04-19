@@ -30,7 +30,7 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) 
 ### One-liner (recommended)
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | bash
+curl -LsSf https://raw.githubusercontent.comFlameingmoy/automedal/main/install.sh | bash
 ```
 
 The installer verifies Python ≥ 3.11, installs `pipx` if needed, installs AutoMedal into an isolated `pipx` venv, and creates `~/.automedal/` (mode 0700) for credentials, logs, and sprites.
