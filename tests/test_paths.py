@@ -13,15 +13,16 @@ from automedal.paths import Layout
 # ── dev mode (this repo) ──────────────────────────────────────────────────────
 
 def test_dev_mode_detected_from_repo(tmp_path):
-    """A directory with pyproject.toml + run.sh is detected as dev mode."""
+    """A directory with pyproject.toml + automedal/run_loop.py is dev mode."""
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'automedal'\n")
-    (tmp_path / "run.sh").write_text("#!/bin/bash\necho hi\n")
+    (tmp_path / "automedal").mkdir()
+    (tmp_path / "automedal" / "run_loop.py").write_text("# stub\n")
     layout = Layout(cwd=tmp_path)
     assert layout.mode == "dev"
 
 
 def test_user_mode_detected_from_bare_dir(tmp_path):
-    """An empty directory (no pyproject.toml + run.sh) is user mode."""
+    """An empty directory is user mode."""
     layout = Layout(cwd=tmp_path)
     assert layout.mode == "user"
 

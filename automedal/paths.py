@@ -1,6 +1,6 @@
 """Layout — resolves all file paths for dev mode (this repo) and user mode (installed).
 
-Dev mode: cwd has both pyproject.toml and run.sh → flat layout as-is.
+Dev mode: cwd has pyproject.toml + an `automedal/` package dir → flat layout as-is.
 User mode: everything else → hidden layout under .automedal/ in cwd.
 
 Every module that touches disk should resolve paths through Layout so the same
@@ -20,8 +20,8 @@ def _detect_mode(cwd: Path) -> Literal["dev", "user"]:
     """Return 'dev' when running inside the AutoMedal repo, 'user' otherwise."""
     if os.environ.get("AUTOMEDAL_DEV"):
         return "dev"
-    # Dev mode = cwd has both pyproject.toml (AutoMedal's) and run.sh
-    if (cwd / "pyproject.toml").exists() and (cwd / "run.sh").exists():
+    # Dev mode = AutoMedal's own checkout (pyproject.toml + the package dir)
+    if (cwd / "pyproject.toml").exists() and (cwd / "automedal" / "run_loop.py").exists():
         return "dev"
     return "user"
 
@@ -125,6 +125,16 @@ class Layout:
         return self.cwd / "agent_loop.log"
 
     @property
+    def events_file(self) -> Path:
+        """JSONL event sink for the bespoke agent kernel."""
+        if self.mode == "user":
+            return self.hidden_root / "logs" / "agent_loop.events.jsonl"
+        env_evt = os.environ.get("AUTOMEDAL_EVENTS_FILE")
+        if env_evt:
+            return Path(env_evt)
+        return self.cwd / "agent_loop.events.jsonl"
+
+    @property
     def last_training_output(self) -> Path:
         return (
             self.hidden_root / "cache" / ".last_training_output"
@@ -154,14 +164,6 @@ class Layout:
     def scout_dir(self) -> Path:
         return _PKG_DIR / "scout" if self.mode == "user" else self.cwd / "scout"
 
-    @property
-    def run_sh(self) -> Path:
-        return (
-            _PKG_DIR / "harness" / "run.sh"
-            if self.mode == "user"
-            else self.cwd / "run.sh"
-        )
-
     # ── convenience ───────────────────────────────────────────────────────
 
     def as_env(self) -> dict[str, str]:
@@ -182,13 +184,12 @@ class Layout:
             "AUTOMEDAL_PREPARE_PY": str(self.prepare_py),
             "AUTOMEDAL_CONFIG_YAML": str(self.config_yaml),
             "AUTOMEDAL_LOG_FILE": str(self.log_file),
+            "AUTOMEDAL_EVENTS_FILE": str(self.events_file),
             "AUTOMEDAL_LAST_TRAINING_OUTPUT": str(self.last_training_output),
             "AUTOMEDAL_PROMPTS_DIR": str(self.prompts_dir),
             "AUTOMEDAL_TEMPLATES_DIR": str(self.templates_dir),
             "AUTOMEDAL_HARNESS_DIR": str(self.harness_dir),
             "AUTOMEDAL_SCOUT_DIR": str(self.scout_dir),
-            "AUTOMEDAL_RUN_SH": str(self.run_sh),
-            # Legacy compat — run.sh reads LOG_FILE directly
             "LOG_FILE": str(self.log_file),
         }
         return d

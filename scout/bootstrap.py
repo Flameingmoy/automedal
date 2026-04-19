@@ -230,7 +230,7 @@ def bootstrap(slug, skip_download=False, smoke_test=False, yes=False, abort_on_w
     Args:
         slug: Kaggle competition slug (e.g. 'playground-series-s6e4')
         skip_download: If True, skip download (data already in data/)
-        smoke_test: If True, run 'bash run.sh 1' after bootstrap
+        smoke_test: If True, run one bespoke-kernel iteration after bootstrap
         yes: If True, skip the low-confidence "continue anyway?" prompt (auto-yes)
         abort_on_warning: If True, abort instead of prompting when confidence < 0.7
         extra_args: Ignored; accepted for forward-compat with CLI passthrough
@@ -329,9 +329,9 @@ def bootstrap(slug, skip_download=False, smoke_test=False, yes=False, abort_on_w
 
     # Optional smoke test
     if smoke_test and success:
-        print("\n  Starting smoke test (run.sh 1)...")
+        print("\n  Starting smoke test (1 iteration)...")
         subprocess.Popen(
-            ["bash", os.path.join(PROJECT_ROOT, "run.sh"), "1"],
+            [sys.executable, "-m", "automedal.run_loop", "1"],
             cwd=PROJECT_ROOT,
         )
 

@@ -57,12 +57,10 @@ class DoctorScreen(Screen):
         self._rows: list[Static] = []
 
     _CHECKS = [
-        ("node",     "Node.js on PATH"),
-        ("npm",      "npm on PATH"),
-        ("pi_bin",   "pi binary resolved"),
-        ("pi_ver",   "pi version"),
-        ("auth",     "~/.pi/agent/auth.json"),
-        ("smoke",    "pi smoke test"),
+        ("sdk",      "anthropic / openai SDKs"),
+        ("env_file", "~/.automedal/.env"),
+        ("provider", "active provider configured"),
+        ("smoke",    "provider smoke test"),
         ("layout",   "Layout paths"),
     ]
 
@@ -80,70 +78,42 @@ class DoctorScreen(Screen):
         asyncio.get_event_loop().create_task(self._run_checks())
 
     async def _run_checks(self) -> None:
-        pi_bin = None
+        import os
 
-        # node
-        ok = shutil.which("node") is not None
-        self._set("node", ok, shutil.which("node") or "not found")
-
-        # npm
-        ok = shutil.which("npm") is not None
-        self._set("npm", ok, shutil.which("npm") or "not found")
-
-        # pi_bin
+        # SDKs
         try:
-            from automedal.pi_runtime import ensure_pi
-            pi_path = ensure_pi()
-            pi_bin = str(pi_path)
-            self._set("pi_bin", True, pi_bin)
-        except SystemExit as exc:
-            self._set("pi_bin", False, str(exc))
+            from importlib.metadata import version as _v
+            self._set("sdk", True, f"anthropic {_v('anthropic')} / openai {_v('openai')}")
         except Exception as exc:
-            self._set("pi_bin", False, str(exc))
+            self._set("sdk", False, f"missing: {exc}")
 
-        # pi_ver
-        if pi_bin:
-            try:
-                from automedal.pi_runtime import pi_version
-                ver = pi_version()
-                self._set("pi_ver", True, ver)
-            except Exception as exc:
-                self._set("pi_ver", False, str(exc))
-        else:
-            self._set("pi_ver", False, "pi not found")
+        # env file
+        from automedal.auth import ENV_FILE, configured_providers
+        self._set("env_file", ENV_FILE.exists(),
+                  str(ENV_FILE) + (" (present)" if ENV_FILE.exists() else " (missing)"))
 
-        # auth
-        auth = Path.home() / ".pi" / "agent" / "auth.json"
-        if auth.exists():
-            try:
-                data = json.loads(auth.read_text())
-                providers = ", ".join(data.keys()) if data else "(empty)"
-                self._set("auth", bool(data), providers)
-            except Exception as exc:
-                self._set("auth", False, f"parse error: {exc}")
-        else:
-            self._set("auth", False, "not found — run 'automedal setup'")
+        # active provider
+        provider = os.environ.get("AUTOMEDAL_PROVIDER", "opencode-go")
+        model = os.environ.get("AUTOMEDAL_MODEL")
+        if not model:
+            slug = os.environ.get("MODEL", "opencode-go/minimax-m2.7")
+            if "/" in slug:
+                provider, model = slug.split("/", 1)
+            else:
+                model = slug
+        active = configured_providers()
+        self._set("provider", provider in active or provider == "ollama",
+                  f"{provider}/{model} (configured: {', '.join(active) or 'none'})")
 
         # smoke test (offload to thread pool)
-        if pi_bin:
-            from automedal.dispatch import _smoke_test
-            env_key = {}
-            try:
-                if self._layout:
-                    env_key = self._layout.as_env()
-            except Exception:
-                pass
-            import os
-            model = os.environ.get("MODEL", "opencode-go/minimax-m2.7")
-            try:
-                passed = await asyncio.get_event_loop().run_in_executor(
-                    None, _smoke_test, pi_bin, model
-                )
-                self._set("smoke", passed, "READY" if passed else f"no READY (model: {model})")
-            except Exception as exc:
-                self._set("smoke", False, str(exc))
-        else:
-            self._set("smoke", False, "skipped — pi not found")
+        try:
+            from automedal.agent.providers import smoke
+            ok, detail = await asyncio.get_event_loop().run_in_executor(
+                None, smoke, provider, model
+            )
+            self._set("smoke", ok, detail)
+        except Exception as exc:
+            self._set("smoke", False, str(exc))
 
         # layout paths
         if self._layout is not None:

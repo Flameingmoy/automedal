@@ -126,14 +126,14 @@ class SetupWizardScreen(Screen):
         elif not needs_key:
             status.update(f"  (no key needed for {provider})\n  Running smoke test…")
 
-        # Smoke test via the deepagents runtime — works for both agent modes
-        from automedal import agent_runtime as ar
+        # Smoke test via the bespoke providers module
+        from automedal.agent.providers import smoke, parse_slug
         try:
-            prov, short = ar.parse_slug(default_model)
+            prov, short = parse_slug(default_model)
         except ValueError:
             prov, short = provider, default_model
         ok, detail = await asyncio.get_event_loop().run_in_executor(
-            None, ar.smoke_test, prov, short
+            None, smoke, prov, short
         )
 
         if ok:

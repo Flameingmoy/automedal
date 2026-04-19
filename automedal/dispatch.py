@@ -21,6 +21,12 @@ for _k, _v in (("OMP_NUM_THREADS", "4"), ("MKL_NUM_THREADS", "4"),
                ("VECLIB_MAXIMUM_THREADS", "4")):
     os.environ.setdefault(_k, _v)
 
+# Ensure ~/.automedal/ exists on first run — keys, sprites, and user-mode
+# logs all live under it. Lazy creation during `setup` is fine for .env, but
+# having the root in place up-front lets the TUI, sprite loader, and doctor
+# write to it without each checking for parents.
+(Path.home() / ".automedal").mkdir(parents=True, exist_ok=True)
+
 # Populate os.environ from ~/.automedal/.env before any command inspects it.
 # Safe no-op when the file doesn't exist (first run).
 load_env()
@@ -34,22 +40,8 @@ def dispatch(cmd: str, args: list[str]) -> int:
     layout = Layout()
     env = {**os.environ, **layout.as_env()}
 
-    # Agent runtime selector (pi = legacy Node agent, deepagents = LangChain)
-    agent_mode = env.get("AUTOMEDAL_AGENT", "pi")
-
-    # pi binary is only needed for the legacy agent path
-    if agent_mode == "pi":
-        try:
-            from automedal.pi_runtime import ensure_pi
-            env["AUTOMEDAL_PI_BIN"] = str(ensure_pi())
-        except SystemExit as exc:
-            # pi missing — only fail for commands that actually need it
-            if cmd in ("run",):
-                print(str(exc), file=sys.stderr)
-                return 1
-
     # Commands that don't require prior setup
-    ungated = {"setup", "help", "--help", "-h", "doctor", "version", "--version", "compact", "status"}
+    ungated = {"setup", "help", "--help", "-h", "doctor", "version", "--version", "status"}
     if cmd not in ungated and _needs_setup(env):
         print("AutoMedal isn't configured yet.\nRun:  automedal setup")
         return 1
@@ -66,7 +58,6 @@ def dispatch(cmd: str, args: list[str]) -> int:
         "run":       _cmd_run,
         "status":    _cmd_status,
         "clean":     _cmd_clean,
-        "compact":   _cmd_compact,
         "help":      _cmd_help,
         "--help":    _cmd_help,
         "-h":        _cmd_help,
@@ -92,10 +83,6 @@ def _needs_setup(env: dict) -> bool:
 def _run_python(script: Path, extra_args: list[str], env: dict) -> int:
     """Run a Python script with the project's interpreter."""
     return subprocess.call([sys.executable, str(script)] + extra_args, env=env)
-
-
-def _run_sh(script: Path, extra_args: list[str], env: dict) -> int:
-    return subprocess.call(["bash", str(script)] + extra_args, env=env)
 
 
 # ── command implementations ───────────────────────────────────────────────────
@@ -174,17 +161,15 @@ def _cmd_setup(args, layout, env) -> int:
         else:
             print(f"(no key needed for {provider})")
 
-    print(f"\nSetup complete.\n  Provider:      {provider}\n  Default model: {default_model}")
-    print(f"  Agent runtime: {env.get('AUTOMEDAL_AGENT', 'pi')} "
-          f"(set AUTOMEDAL_AGENT=deepagents to use the Python runtime)\n")
+    print(f"\nSetup complete.\n  Provider:      {provider}\n  Default model: {default_model}\n")
 
     print("Running smoke test…")
-    from automedal import agent_runtime as ar
+    from automedal.agent.providers import smoke, parse_slug
     try:
-        prov, short = ar.parse_slug(default_model)
+        prov, short = parse_slug(default_model)
     except ValueError:
         prov, short = provider, default_model
-    ok, detail = ar.smoke_test(prov, short)
+    ok, detail = smoke(prov, short)
     if ok:
         print(f"✓ Smoke test passed — {detail}")
     else:
@@ -194,24 +179,15 @@ def _cmd_setup(args, layout, env) -> int:
 
 
 def _cmd_doctor(args, layout, env) -> int:
-    from automedal.auth import ENV_FILE, PROVIDER_ENV, configured_providers
+    from automedal.auth import ENV_FILE, configured_providers
 
-    agent_mode = env.get("AUTOMEDAL_AGENT", "pi")
     print("── agent runtime ──")
-    print(f"  AUTOMEDAL_AGENT = {agent_mode}")
-    if agent_mode == "pi":
-        try:
-            from automedal.pi_runtime import pi_version
-            print(f"  pi: {pi_version()}")
-        except Exception as exc:
-            print(f"  pi: unavailable ({exc})")
-    else:
-        try:
-            import deepagents, langchain  # noqa: F401
-            from importlib.metadata import version as _v
-            print(f"  deepagents {_v('deepagents')} / langchain {_v('langchain')}")
-        except Exception as exc:
-            print(f"  deepagents: unavailable ({exc})")
+    print("  bespoke kernel (automedal.agent)")
+    try:
+        from importlib.metadata import version as _v
+        print(f"  anthropic {_v('anthropic')} / openai {_v('openai')}")
+    except Exception as exc:
+        print(f"  SDK lookup failed: {exc}")
     print()
 
     print("── credentials ──")
@@ -227,15 +203,17 @@ def _cmd_doctor(args, layout, env) -> int:
     print()
 
     print("── smoke test ──")
-    model = env.get("MODEL", "opencode-go/minimax-m2.7")
-    print(f"  model: {model}")
-    from automedal import agent_runtime as ar
-    try:
-        prov, short = ar.parse_slug(model)
-    except ValueError:
-        print(f"  ⚠  invalid MODEL slug (expected 'provider/model'): {model}")
-        return 1
-    ok, detail = ar.smoke_test(prov, short)
+    provider = env.get("AUTOMEDAL_PROVIDER", "opencode-go")
+    model = env.get("AUTOMEDAL_MODEL")
+    if not model:
+        slug = env.get("MODEL", "opencode-go/minimax-m2.7")
+        if "/" in slug:
+            provider, model = slug.split("/", 1)
+        else:
+            model = slug
+    print(f"  provider: {provider}\n  model:    {model}")
+    from automedal.agent.providers import smoke
+    ok, detail = smoke(provider, model)
     if ok:
         print(f"  ✓ {detail}")
         return 0
@@ -272,11 +250,9 @@ def _cmd_run(args, layout, env) -> int:
     n = args[0] if args else "50"
     fast = args[1] if len(args) > 1 else ""
     call_args = [n, fast] if fast else [n]
-    if env.get("AUTOMEDAL_AGENT", "pi") == "deepagents":
-        return subprocess.call(
-            [sys.executable, "-m", "automedal.run_loop"] + call_args, env=env
-        )
-    return _run_sh(layout.run_sh, call_args, env)
+    return subprocess.call(
+        [sys.executable, "-m", "automedal.run_loop"] + call_args, env=env
+    )
 
 
 def _cmd_status(args, layout, env) -> int:
@@ -318,12 +294,6 @@ def _cmd_clean(args, layout, env) -> int:
     return rc
 
 
-def _cmd_compact(args, layout, env) -> int:
-    """Compact a memory file when it exceeds the token-budget threshold."""
-    target = args[0] if args else str(layout.research_md)
-    return _run_python(layout.harness_dir / "compact_memory.py", ["--target", target], env)
-
-
 def _cmd_version(args, layout, env) -> int:
     from automedal import __version__
     print(f"automedal {__version__}")
@@ -335,7 +305,7 @@ def _cmd_help(args, layout, env) -> int:
 
 One-time:
   automedal setup                configure a model provider (first-run)
-  automedal doctor               diagnose pi/provider/env state
+  automedal doctor               diagnose provider/env state + smoke-test the LLM
 
 Competition setup:
   automedal discover             list active Kaggle competitions
@@ -348,16 +318,22 @@ Loop:
   automedal run [N]              start the three-phase loop (default 50)
   automedal status               quick health check (knowledge + last results)
   automedal clean                wipe memory files + results.tsv (confirms first)
-  automedal compact [file]       condense research_notes.md (or another file) when it grows large
 
 Monitor:
   automedal                      open TUI home screen (command palette)
   automedal tui [--demo]         same as above
 
 Env vars honored by 'automedal run':
-  MODEL              agent model slug, default opencode-go/minimax-m2.7
-  STAGNATION_K       consecutive non-improving runs before research (default 3)
-  RESEARCH_EVERY     scheduled research cadence (default 10, 0 disables)
-  LOG_FILE           combined loop log path (default agent_loop.log)
+  AUTOMEDAL_PROVIDER     opencode-go | anthropic | openai | ollama | openrouter | groq
+  AUTOMEDAL_MODEL        model id for that provider (default: minimax-m2.7)
+  MODEL                  back-compat slug (provider/model) — split into the two above
+  AUTOMEDAL_ANALYZER     1=on (default), 0=off
+  AUTOMEDAL_QUICK_REJECT 0=off (default), 1=on (30s smoke-train guard)
+  AUTOMEDAL_DEDUPE       1=on (default), 0=off
+  AUTOMEDAL_DEDUPE_THRESHOLD  BM25 score, default 5.0 (higher = stricter)
+  STAGNATION_K           consecutive non-improving runs before research (default 3)
+  RESEARCH_EVERY         scheduled research cadence (default 10, 0 disables)
+  LOG_FILE               human log path (default agent_loop.log)
+  AUTOMEDAL_EVENTS_FILE  JSONL event sink (default agent_loop.events.jsonl)
 """)
     return 0

@@ -34,17 +34,12 @@ def main() -> None:
 
 
 def _prepare_env() -> None:
-    """Inject Layout paths + pi binary into os.environ before the TUI starts."""
+    """Inject Layout paths into os.environ before the TUI starts."""
     try:
         from automedal.paths import Layout
         layout = Layout()
         os.environ.update(layout.as_env())
     except Exception:
-        pass
-    try:
-        from automedal.pi_runtime import ensure_pi
-        os.environ["AUTOMEDAL_PI_BIN"] = str(ensure_pi())
-    except SystemExit:
         pass
 
 
