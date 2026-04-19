@@ -8,6 +8,7 @@
 </p>
 
 <p align="center">
+  <a href="#install">Install</a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#how-it-works">How It Works</a> &bull;
   <a href="#tui--command-centre">TUI</a> &bull;
@@ -18,396 +19,327 @@
 
 ---
 
-AutoMedal is an autonomous experiment loop for tabular ML competitions. It uses a coding agent to try different models, feature engineering, hyperparameters, ensembles, and literature-inspired ideas — keeping only what improves the score.
+AutoMedal is an autonomous experiment loop for tabular ML competitions. A small coding agent tries different models, features, hyperparameters, ensembles, and literature-inspired ideas — keeping only what improves the score.
 
-The harness ships with two interchangeable agent runtimes behind the `AUTOMEDAL_AGENT` flag:
+One install, one command, no Node, no framework sprawl. The agent is a ~300-line async kernel that talks to any OpenAI- or Anthropic-shape provider (opencode-go, Anthropic, OpenAI, OpenRouter, Groq, Ollama, …). All state lives in git-tracked markdown files — the agent itself is stateless.
 
-- **`deepagents`** (Python, [LangChain deepagents](https://github.com/langchain-ai/deepagents)) — pure-pip, no Node dependency, direct access to Anthropic / OpenAI / OpenRouter / Groq / Mistral / Gemini / opencode-go / Ollama. Recommended for new installs.
-- **`pi`** (default until Phase D, [pi coding agent](https://github.com/badlogic/pi-mono)) — Node-based, same provider list, kept for baseline continuity. Auto-installed on first run.
+Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) (same edit → train → check → keep/revert philosophy), extended for Kaggle-style tabular ML.
 
-Both paths run the same three-phase loop, write the same log format, and read the same file-based memory. Flip between them with `AUTOMEDAL_AGENT=deepagents` (or `=pi`).
+## Install
 
-Adapted from [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) — same philosophy (edit, train, check, keep/revert), but targeting tabular ML competitions instead of LLM pretraining.
+### One-liner (recommended)
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | bash
+```
+
+The installer verifies Python ≥ 3.11, installs `pipx` if needed, installs AutoMedal into an isolated `pipx` venv, and creates `~/.automedal/` (mode 0700) for credentials, logs, and sprites.
+
+Upgrade later with the same command, or:
+
+```bash
+pipx upgrade automedal
+```
+
+### Direct pipx (equivalent)
+
+```bash
+pipx install git+https://github.com/OWNER/REPO       # install
+pipx upgrade automedal                                # upgrade
+pipx uninstall automedal                              # remove
+```
+
+### From source (development)
+
+```bash
+git clone https://github.com/OWNER/REPO automedal && cd automedal
+pip install -e .                 # or: uv sync
+automedal --version
+```
+
+Editable install exposes the `automedal` command globally and lets you iterate on the package without reinstalling.
+
+### Requirements
+
+- **Python** 3.11, 3.12, or 3.13
+- **NVIDIA GPU** with CUDA (tested on an RTX 4070 Ti Super, 16 GB). CPU-only works but tabular GBMs will be slow.
+- **API key** for any [supported provider](#providers) — OpenCode Go recommended (one key unlocks GLM / Kimi / MiMo / MiniMax).
+- **Kaggle credentials** at `~/.kaggle/kaggle.json` ([get one here](https://www.kaggle.com/settings)).
+
+### First-run side effects
+
+On first invocation AutoMedal creates:
+
+| Path | Mode | Purpose |
+|------|------|---------|
+| `~/.automedal/` | 0700 | Per-user root |
+| `~/.automedal/.env` | 0600 | Provider API keys (written by `automedal setup`) |
+| `~/.automedal/sprites/` | 0700 | Optional PNG overrides for TUI phase sprites |
+
+Per-competition artifacts are created by `automedal init <slug>` (see [user project layout](#users-project-directory)).
+
+## Quick Start
+
+```bash
+automedal setup                           # 1. paste a provider API key (hidden input)
+automedal discover                        # 2. browse ranked active Kaggle competitions
+automedal init playground-series-s6e4     # 3. download data + wire up the project
+automedal run 50                          # 4. run 50 iterations of the loop
+```
+
+That's it. Each iteration runs the four phases (Researcher → Strategist → Experimenter-edit → train → Experimenter-eval → Analyzer), verifies invariants, tags `exp/NNNN`, and — whenever `val_loss` improves — writes a Kaggle-ready CSV to `submissions/`.
+
+Running `automedal` with no arguments opens the [TUI command centre](#tui--command-centre) instead.
 
 ## How It Works
 
-Each iteration of the loop dispatches up to three agent phases. Each phase is a **separate, stateless agent call** with a small focused prompt — no single call lives long enough to hit context limits, which is how the system scales to 100+ experiments.
+Each iteration is a sequence of short, **stateless** LLM calls. No single call lives long enough to hit context limits — that's how the system scales to 100+ experiments without compaction tricks.
 
 ```
-             ┌──────────────────────────────────────────────┐
-             │   run.sh (pi) or automedal.run_loop (deep)   │
-             │   stagnation · tag · log · dispatch phases   │
-             └──────────┬──────────┬───────────┬────────────┘
-                        │          │           │
-             on empty   │ on       │ every     │
-             queue or   │ stagnation│ iteration│
-             stagnation ↓          ↓           ↓
-                  ┌─────────┐┌──────────┐┌──────────────┐
-                  │Strategist││Researcher││ Experimenter │
-                  └─────────┘└──────────┘└──────────────┘
-                       │         │              │
-        reads & writes │ reads   │ reads        │ writes
-                       ↓         ↓              ↓
-         ┌─────────────────────────────────────────────┐
-         │         File-based memory  (git-tracked)    │
-         │  knowledge.md       — curated KB            │
-         │  experiment_queue.md — next 5 experiments   │
-         │  research_notes.md  — arxiv findings        │
-         │  journal/NNNN-*.md  — per-experiment record │
-         │  results.tsv        — flat log (untracked)  │
-         └─────────────────────────────────────────────┘
+        ┌──────────────────────────────────────────────────┐
+        │    automedal.run_loop  ·  4-phase orchestrator   │
+        │    stagnation · dedupe · quick-reject · verify   │
+        └──┬──────────┬──────────┬──────────┬──────────┬───┘
+           │          │          │          │          │
+           ↓          ↓          ↓          ↓          ↓
+      ┌────────┐┌──────────┐┌────────────┐┌──────┐┌──────────┐
+      │Research││Strategist││Experimenter││Train ││ Analyzer │
+      └────────┘└──────────┘└────────────┘└──────┘└──────────┘
+           │         │            │                    │
+           ↓         ↓            ↓                    ↓
+      ┌──────────────────────────────────────────────────────┐
+      │           File-based memory  (git-tracked)           │
+      │  knowledge.md        — curated KB                    │
+      │  experiment_queue.md — next 5 experiments            │
+      │  research_notes.md   — arxiv findings                │
+      │  journal/NNNN-*.md   — per-experiment record         │
+      │  agent_loop.events.jsonl — structured tool-call log  │
+      └──────────────────────────────────────────────────────┘
 ```
 
 | Phase | Trigger | What it does |
 |-------|---------|--------------|
-| **Researcher** | Stagnation (K non-improving runs) or scheduled cadence | Queries arxiv, reads 2-3 abstracts, appends candidate ideas to `research_notes.md` |
-| **Strategist** | Empty queue or stagnation | Rewrites `knowledge.md` (capped at 80 cited bullets), plans the next 5 experiments into `experiment_queue.md` with axis-diversity enforcement. Receives a **reflective trace** of the last 3 experiments (diff + delta) and a **learning-value ranked** top-10 journal summary — so it reads the most informative past experiments first, not just the most recent |
-| **Experimenter** | Every iteration | Pops the top pending queue entry, edits `agent/train.py` / `agent/prepare.py`, runs training, writes a journal entry with `diff_summary` + `val_loss_delta`, commits or reverts. If a `success_criteria` target was set and the result misses it by ≤ 1%, one targeted retry edit is attempted automatically |
+| **Researcher** | Stagnation (K non-improving runs) or scheduled cadence | Searches arxiv via a sub-agent fan-out, reads 2–3 abstracts, appends candidate ideas to `research_notes.md` |
+| **Strategist** | Empty queue or stagnation | Rewrites `knowledge.md` (capped at 80 cited bullets), plans the next 5 experiments into `experiment_queue.md` with axis-diversity enforcement. Receives a reflective trace of the last 3 experiments (diff + delta) and a learning-value-ranked top-10 journal summary |
+| **Experimenter (edit)** | Every iteration | Pops the top pending queue entry, edits `agent/train.py` / `agent/prepare.py`, commits the change |
+| **Training** | Every iteration | Fixed wall-clock budget (default 10 min). Runs in a subprocess so the agent can't interfere |
+| **Experimenter (eval)** | Every iteration | Parses training output, writes a journal entry with `diff_summary` + `val_loss_delta`, commits or reverts |
+| **Analyzer** | Every iteration (default ON) | Compresses the iteration into a one-paragraph lesson and appends to `knowledge.md` |
 
-State lives in **git-tracked markdown files**, not in conversation memory. The agent is stateless; the files are state.
+### Guardrails
 
-### Self-improvement features (Phase 3)
-
-| Feature | Where |
-|---------|-------|
-| **Reflective trace** — last 3 journal diffs + deltas injected into Strategist context | `harness/build_trace_trailer.py` |
-| **Learning-value ranking** — journals scored by outcome + signal strength + axis diversity; top-10 sent to Strategist | `harness/rank_journals.py` |
-| **`success_criteria`** — each queue entry carries a measurable target; near-miss triggers one free retry | `harness/verify_iteration.py` |
-| **Regression gate** — `AUTOMEDAL_REGRESSION_GATE=strict` reverts git tags when val_loss regresses >1% | `harness/verify_iteration.py` |
-| **Memory compaction** — `automedal compact` distils `research_notes.md` when it grows large | `harness/compact_memory.py` |
-
-## Requirements
-
-- **GPU**: NVIDIA GPU with CUDA support (tested on RTX 4070 Ti Super, 16 GB VRAM)
-- **Python**: 3.11 - 3.13
-- **Node.js**: ≥ 22 — **only** required for the legacy `AUTOMEDAL_AGENT=pi` path. The default-future `deepagents` runtime is pure Python.
-- **[uv](https://docs.astral.sh/uv/)**: Python dependency management
-- **API key** for any [supported provider](#providers) (OpenCode Go recommended)
-- **Kaggle credentials** at `~/.kaggle/kaggle.json` ([get one here](https://www.kaggle.com/settings))
-
-```bash
-pip install automedal        # or: pipx install automedal
-# deepagents ships as a pip dependency — zero Node required.
-# The legacy pi coding agent is auto-installed from npm only when AUTOMEDAL_AGENT=pi.
-```
-
-For development (running from this repo):
-
-```bash
-pip install -e .             # editable install — `automedal` becomes available globally
-# or with uv:
-uv sync
-# Optional extras:
-uv sync --extra research   # arxiv lookups for the Researcher phase
-uv sync --extra automl     # AutoGluon for the Experimenter
-```
-
-`./am` is a convenience wrapper equivalent to the `automedal` command — use either when developing from source.
-
-## Quick Start
-
-### 1. First-run setup
-
-```bash
-automedal setup
-```
-
-Interactive wizard: choose a provider, paste your API key (hidden input), stored in a dotenv file at `~/.automedal/.env` (mode 0600), and runs a smoke test via the deepagents runtime. Any `automedal` command besides `setup`, `help`, and `doctor` is gated behind this step.
-
-If you already have a legacy `~/.pi/agent/auth.json` from v1.0, setup offers a one-shot import.
-
-If you prefer to manage keys yourself, export the env var directly (e.g. `export OPENCODE_API_KEY=sk-...`) and skip `automedal setup` — env vars take precedence.
-
-### 2. Find and bootstrap a competition
-
-```bash
-automedal discover                          # browse ranked active competitions in TUI
-automedal select                            # pick one from the TUI DataTable
-automedal init playground-series-s6e4       # or pass a slug directly
-```
-
-### 3. Run the loop
-
-```bash
-automedal run 50      # 50 iterations of the three-phase loop
-```
-
-That's it. Each iteration: check stagnation → maybe Researcher → maybe Strategist → always Experimenter → verify invariants → tag `exp/NNNN`. Every improvement auto-generates a Kaggle-ready submission CSV in `submissions/`.
+| Feature | Default | Env var | Purpose |
+|---------|---------|---------|---------|
+| **BM25 dedupe** | on | `AUTOMEDAL_DEDUPE` | Skips queue entries whose motivation matches a past journal; bypass with `[force]` in the hypothesis |
+| **Quick-reject** | off | `AUTOMEDAL_QUICK_REJECT` | 30-second smoke-train guard aborts clearly-broken configs before burning the full budget |
+| **Regression gate** | warn | `AUTOMEDAL_REGRESSION_GATE` | `strict` reverts git tags when val_loss regresses >1% |
+| **Analyzer** | on | `AUTOMEDAL_ANALYZER` | Per-iteration knowledge compression |
+| **Success criteria** | always | — | Each queue entry carries a measurable target; near-misses (≤1%) trigger one free retry |
 
 ## TUI — Command Centre
 
-`automedal` with no arguments opens the TUI home screen. You can also type any command directly into its command palette instead of using the shell.
+`automedal` with no arguments opens a Textual TUI. You can run every command from its palette instead of the shell.
 
 ```
 ┌─ AutoMedal · playground-s6e4 · val_loss 0.0503 · iter 24/50 ─────┐
-│                                                                    │
-│  ● recent activity                                                 │
-│    #24 irredundant-kfold-hpo   ✓  0.0503  (-0.0001)               │
-│    #23 catboost-depth-tune     ✗  0.0508                          │
-│    #22 lgbm-bagging            ✓  0.0504  (-0.0014)               │
-│                                                                    │
-│  [r] run 50  [d] discover  [i] init  [s] status  [q] quit         │
-│                                                                    │
-│  > _                                    (type command, Enter)      │
-└────────────────────────────────────────────────────────────────────┘
+│                                                                   │
+│  ● recent activity                                                │
+│    #24 irredundant-kfold-hpo   ✓  0.0503  (-0.0001)              │
+│    #23 catboost-depth-tune     ✗  0.0508                         │
+│    #22 lgbm-bagging            ✓  0.0504  (-0.0014)              │
+│                                                                   │
+│  [r] run 50  [d] discover  [i] init  [s] status  [q] quit        │
+│                                                                   │
+│  > _                                    (type command, Enter)     │
+└───────────────────────────────────────────────────────────────────┘
 ```
-
-Type a command and press Enter, or use the quick-action keys:
 
 | Key / command | Action |
 |---|---|
 | `run [N]` / `r` | Launch N iterations → pushes live Dashboard |
 | `discover` / `d` | Ranked competition DataTable + s=select |
-| `select` | Native DataTable picker → bootstrap selected competition |
-| `init <slug>` / `i` | Staged progress screen (✓ per step) while bootstrapping |
-| `status` / `s` | Full status screen: leaderboard + recent activity + queue |
+| `select` | DataTable picker → bootstrap selected competition |
+| `init <slug>` / `i` | Staged progress screen while bootstrapping |
+| `status` / `s` | Full status: leaderboard + recent activity + queue |
 | `setup` | Provider wizard with hidden API-key input |
-| `doctor` | Diagnostic checklist (Node, pi, auth, smoke test) |
+| `doctor` | Diagnostic checklist (SDKs, env file, provider, smoke test) |
 | `clean` | Confirmation modal before wiping memory |
-| `compact [file]` | Condense `research_notes.md` when it grows large |
 | `q` | Quit |
 
-### Live Dashboard (during a run)
+### Live Dashboard
 
-Pushing `run N` from the home screen launches the existing three-panel dashboard over the home screen. `ctrl+c` sends SIGTERM to the subprocess — the harness finishes the current iteration cleanly, then pops back to home.
+During a run, the dashboard shows: phase sprite, val_loss sparkline, top-5 leaderboard with medals, scrollable experiment log, current-experiment card, GPU util/VRAM/temp, session totals, and a phase-colored live log stream. `ctrl+o` flips to a full-screen raw stream. `ctrl+c` sends SIGTERM so the harness finishes the current iteration cleanly.
 
 ```bash
-automedal tui           # equivalent to bare automedal
 automedal tui --demo    # replay a fixture log — no live run required
 ```
 
-Dashboard panels: phase sprite, val_loss sparkline, top-5 leaderboard with medals, scrollable experiment log, current-experiment card (hypothesis + budget bar + live loss), GPU util/VRAM/temp, session totals, and a phase-colored live log stream. `ctrl+o` flips to a full-screen raw stream.
-
 ### Custom sprites
 
-The phase sprite panel shows a generated geometric glyph for each phase (RESEARCH, CODING, EXPERIMENT, SUBMITTING, IDLE, FROZEN). You can replace these with your own pixel art:
-
-**Sprite directory:** `~/.automedal/sprites/<theme>/<phase>/<size>/frame_NN.png`
-
-- `<theme>` — currently `dark` (matches the TUI theme)
-- `<phase>` — one of: `research`, `coding`, `experiment`, `submitting`, `idle`, `frozen`
-- `<size>` — one of: `16`, `24`, `32` (pixels — the sprite panel is 22 columns wide, so `24` is the default)
-- `frame_NN.png` — `frame_00.png` and `frame_01.png` (two frames, cycled every heartbeat)
-
-**Quick recipe:**
-
-```
-~/.automedal/sprites/
-└── dark/
-    ├── research/
-    │   └── 24/
-    │       ├── frame_00.png    ← idle frame (24×24 RGBA PNG)
-    │       └── frame_01.png    ← animated frame
-    ├── coding/24/frame_00.png
-    ├── experiment/24/frame_00.png
-    ├── submitting/24/frame_00.png
-    ├── idle/24/frame_00.png
-    └── frozen/24/frame_00.png
-```
-
-Drop any `frame_00.png` (and optionally `frame_01.png`) into the right folder and restart the TUI — it will use your PNG automatically. If the file doesn't exist, the auto-generated geometric glyph is shown instead. Pillow + rich-pixels must be installed (`uv sync --extra tui`).
-
-**Medal sprites** (shown in the leaderboard) follow the same pattern:
-
-```
-~/.automedal/sprites/dark/medal/
-├── gold_24.png
-├── silver_24.png
-└── bronze_24.png
-```
+Drop PNGs into `~/.automedal/sprites/dark/<phase>/24/frame_00.png` (phases: `research`, `coding`, `experiment`, `submitting`, `idle`, `frozen`). Missing files fall back to the built-in geometric glyph. See [`tui/sprite_loader.py`](tui/sprite_loader.py) for the full layout.
 
 ## CLI Reference
 
-All commands work from both the TUI command palette and the shell:
-
 | Command | Description |
 |---------|-------------|
-| `automedal` / `automedal tui` | Open TUI home screen (command palette + dashboard) |
-| `automedal setup` | Configure a model provider (first-run) |
-| `automedal doctor` | Diagnose pi, provider, and env state |
+| `automedal` / `automedal tui` | Open TUI home screen |
+| `automedal setup` | Configure a provider + API key (first-run) |
+| `automedal doctor` | Smoke-test the provider + SDK versions + env state |
 | `automedal discover` | List and rank active Kaggle competitions |
 | `automedal select` | Pick a competition from a DataTable |
-| `automedal init <slug>` | Download data, infer schema, wire up a competition |
+| `automedal init <slug>` | Download data, infer schema, wire up the project |
 | `automedal prepare` | Regenerate `.npy` arrays from `data/` |
-| `automedal render` | Re-render `AGENTS.md` and `program.md` from templates |
-| `automedal run [N]` | Start the three-phase loop (default 50 iterations) |
-| `automedal status` | Health check: knowledge, results, latest experiment tags |
-| `automedal clean` | Wipe memory files + results (prompts to confirm) |
-| `automedal compact [file]` | Condense a memory file when it exceeds 40 KB |
-
-> Legacy: `./am <command>` still works — it's a thin shim that calls `python -m automedal`.
+| `automedal render` | Re-render `AGENTS.md` from the template |
+| `automedal run [N]` | Start the loop (default 50 iterations) |
+| `automedal status` | Quick health: knowledge head, last 5 results, latest tags |
+| `automedal clean` | Wipe memory files + `results.tsv` (confirms first) |
+| `automedal version` | Print installed version |
 
 ## Providers
 
-Both agent runtimes (`pi` and `deepagents`) are provider-agnostic. Switch at runtime with a single env var — no code changes:
+One env var picks the provider; one more picks the model. Keys live in `~/.automedal/.env` (mode 0600).
 
-| Provider | Env var | Example model slug | Notes |
-|----------|---------|-------------------|-------|
-| **OpenCode Go** (default) | `OPENCODE_API_KEY` | `opencode-go/minimax-m2.7` | One key unlocks GLM-5.1, Kimi K2.5, MiMo, MiniMax M2.5/2.7. Routed through `ChatAnthropic` in the deepagents runtime. |
-| OpenRouter | `OPENROUTER_API_KEY` | `openrouter/openai/gpt-4o-mini` | Free-tier models available; aggregates many providers |
-| Ollama (local) | `OLLAMA_HOST` | `ollama/llama3.2` | No cloud — runs on your own GPU. Set `OLLAMA_HOST=http://localhost:11434` |
-| Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-sonnet-4-5` | Direct Claude access |
-| OpenAI | `OPENAI_API_KEY` | `openai/gpt-4o` | Direct GPT access |
-| Groq | `GROQ_API_KEY` | `groq/llama-3.3-70b-versatile` | Fast inference |
-| Mistral | `MISTRAL_API_KEY` | `mistral/mistral-large-latest` | |
-| Google Gemini | `GEMINI_API_KEY` | `gemini/gemini-2.0-flash-exp` | |
+| Provider | Env var (key) | Example `AUTOMEDAL_MODEL` | Notes |
+|----------|---------------|---------------------------|-------|
+| **OpenCode Go** (default) | `OPENCODE_API_KEY` | `minimax-m2.7` | One key unlocks GLM, Kimi, MiMo, MiniMax. Routes through the Anthropic-shape endpoint |
+| Anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5` | Direct Claude |
+| OpenAI | `OPENAI_API_KEY` | `gpt-4o` | Direct GPT |
+| OpenRouter | `OPENROUTER_API_KEY` | `openai/gpt-4o-mini` | Free-tier models available; aggregates many providers |
+| Groq | `GROQ_API_KEY` | `llama-3.3-70b-versatile` | Fast Llama / Mixtral |
+| Ollama (local) | — (set `OLLAMA_HOST`) | `llama3.2` | Runs on your own GPU via `http://localhost:11434/v1` |
 
 ```bash
-MODEL="openrouter/openai/gpt-4o-mini" automedal run 50
-AUTOMEDAL_AGENT=deepagents automedal run 50        # explicit Python runtime
+AUTOMEDAL_PROVIDER=anthropic AUTOMEDAL_MODEL=claude-sonnet-4-5 automedal run 50
+AUTOMEDAL_PROVIDER=ollama    AUTOMEDAL_MODEL=llama3.2          automedal run 10
 ```
+
+Back-compat: a legacy `MODEL=provider/model-id` slug is still honored and split into the two vars above.
 
 ## Configuration
 
-Both loop entry points (`run.sh` for pi, `python -m automedal.run_loop` for deepagents) honor the same env vars:
+All env vars honored by `automedal run`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AUTOMEDAL_AGENT` | `pi` | Agent runtime selector: `pi` (Node) or `deepagents` (Python). `pi` is default until Phase D. |
-| `MODEL` | `opencode-go/minimax-m2.7` | Any `<provider>/<model-id>` slug from the [providers table](#providers) |
+| `AUTOMEDAL_PROVIDER` | `opencode-go` | Provider name from the table above |
+| `AUTOMEDAL_MODEL` | `minimax-m2.7` | Model id for that provider |
+| `AUTOMEDAL_ANALYZER` | `1` | `0` disables per-iteration knowledge compression |
+| `AUTOMEDAL_QUICK_REJECT` | `0` | `1` enables the 30s smoke-train guard |
+| `AUTOMEDAL_DEDUPE` | `1` | `0` disables BM25 motivation dedupe |
+| `AUTOMEDAL_DEDUPE_THRESHOLD` | `5.0` | BM25 score threshold (higher = stricter) |
 | `STAGNATION_K` | `3` | Trigger Researcher + Strategist after K non-improving runs |
-| `RESEARCH_EVERY` | `10` | Scheduled Researcher cadence (set `0` to disable) |
-| `COOLDOWN_SECS` | `1` | Seconds to pause between iterations (0 to disable) |
-| `TRAIN_BUDGET_MINUTES` | `10` | Training wall-clock limit per experiment (minutes) |
-| `LOG_FILE` | `agent_loop.log` | Path for the combined loop log |
-| `AUTOMEDAL_REGRESSION_GATE` | `warn` | Set to `strict` to auto-revert experiments that regress >1% |
+| `RESEARCH_EVERY` | `10` | Scheduled Researcher cadence (`0` disables) |
+| `COOLDOWN_SECS` | `1` | Seconds to pause between iterations |
+| `TRAIN_BUDGET_MINUTES` | `10` | Training wall-clock limit per experiment |
+| `LOG_FILE` | `agent_loop.log` | Human-readable log path |
+| `AUTOMEDAL_EVENTS_FILE` | `agent_loop.events.jsonl` | Structured JSONL event sink (TUI reads this) |
+| `AUTOMEDAL_REGRESSION_GATE` | `warn` | `strict` reverts experiments that regress >1% |
 
 ```bash
-STAGNATION_K=5 RESEARCH_EVERY=0 MODEL="ollama/qwen3:32b" automedal run 100
-AUTOMEDAL_REGRESSION_GATE=strict automedal run 50
+STAGNATION_K=5 RESEARCH_EVERY=0 AUTOMEDAL_QUICK_REJECT=1 automedal run 100
 ```
 
 ## Project Structure
 
 ```
-automedal/               Installed package (entry point + dispatch)
-├── cli.py               `automedal` console script entry point
-├── dispatch.py          One Python function per subcommand — reads AUTOMEDAL_AGENT
-├── paths.py             Layout class — resolves all paths for dev/user mode
-├── auth.py              ~/.automedal/.env store + legacy pi-auth importer
-├── agent_runtime.py     LangChain deepagents: model factory, path-gated tools, phase agents, smoke test
-├── run_loop.py          Three-phase loop (Python) — invoked when AUTOMEDAL_AGENT=deepagents
-├── pi_runtime.py        ensure_pi() — detects/installs pi into _vendor/ (legacy path only)
-└── _vendor/             pi npm package (auto-populated on first run, gitignored)
+automedal/                        Installed package
+├── cli.py                        `automedal` console script entry point
+├── dispatch.py                   One function per subcommand
+├── paths.py                      Layout class — dev vs user mode resolution
+├── auth.py                       ~/.automedal/.env store
+├── run_loop.py                   4-phase orchestrator
+├── dedupe.py                     BM25 motivation dedupe
+├── quick_reject.py               30s smoke-train guard
+└── agent/                        Bespoke agent kernel
+    ├── kernel.py                 Async tool-call loop (~250 LOC)
+    ├── events.py                 JSONL event emitter + human-log mirror
+    ├── providers/
+    │   ├── anthropic.py          anthropic SDK (Anthropic + opencode-go)
+    │   └── openai.py             openai SDK (OpenAI + Ollama + OpenRouter + Groq)
+    ├── tools/
+    │   ├── fs.py                 read/write/edit/list/grep (path-guarded)
+    │   ├── shell.py              run_shell (cwd-bound, timeout)
+    │   ├── cognition.py          BM25 recall tool
+    │   ├── arxiv.py              Researcher-only paper search
+    │   └── subagent.py           spawn_subagent(prompt, tools, max_steps)
+    ├── phases/                   researcher / strategist / experimenter_* / analyzer
+    └── prompts/*.md.j2           jinja-templated phase prompts
 
-run.sh                   Three-phase loop (bash) — legacy pi path; exec's run_loop.py when flag=deepagents
-config_loader.py         Loads configs/competition.yaml
+harness/                          Deterministic automation (no LLM)
+├── check_stagnation.py           K-run stagnation detector
+├── next_exp_id.py                Experiment ID allocator
+├── init_memory.py                Creates memory files on bootstrap
+├── verify_iteration.py           Post-phase invariant + regression + success_criteria
+├── build_trace_trailer.py        Reflective-trace builder
+└── rank_journals.py              Learning-value ranker
 
-harness/                 Deterministic automation (Python, no LLM)
-├── check_stagnation.py  K-run stagnation detector + best_val_loss()
-├── next_exp_id.py       Zero-padded NNNN experiment ID allocator
-├── init_memory.py       Creates/resets memory files on bootstrap
-├── verify_iteration.py  Post-phase invariant checker + regression gate + success_criteria
-├── build_trace_trailer.py  Reflective trace builder (last N journals → markdown block)
-├── rank_journals.py     Learning-value ranker (score + diversity → top-K summary)
-├── compact_memory.py    Memory compaction (size check → agent call → archive)
-└── stream_events.py     Shared event formatter — pi JSON (stdin) + LangGraph v2 (in-process)
+scout/                            Competition discovery + bootstrap
+├── discover.py / select.py / bootstrap.py / sniff.py / scoring.py / render.py
 
-scout/                   Competition discovery + bootstrap pipeline
-├── discover.py          List and rank active Kaggle competitions
-├── select.py            Non-interactive pick_and_bootstrap() + CLI fallback
-├── bootstrap.py         Download data, infer schema, wire everything up
-├── sniff.py             CSV schema inference (target, features, task type)
-├── scoring.py           Two-stage competition scoring heuristics
-└── render.py            Jinja2 template rendering for AGENTS.md / program.md
+tui/                              Textual TUI
+├── app.py  · state.py  · events.py
+├── sources/                      log_tail, events_jsonl, journal, results, memory, gpu, demo
+├── screens/                      home, dashboard, select_competition, setup_wizard, …
+└── widgets/                      sprite, metric_chart, leaderboard, live_stream, …
 
-prompts/                 Phase contracts (static, competition-agnostic)
-├── strategist.md        Planning: KB curation + experiment queue + success_criteria
-├── researcher.md        Arxiv research
-├── experimenter.md      Implementation: code, train, journal + diff_summary/val_loss_delta
-├── experimenter_eval.md Eval: parse result, write journal, commit/revert
-└── compactor.md         Memory compaction: distil a large markdown file
-
-tui/                     Textual TUI (home screen + dashboard + per-command screens)
-├── app.py               App: sources → bus → state reducer → screens + _custom_screen()
-├── state.py             Pure PhaseMachine.reduce((state, event)) → state
-├── events.py            Event dataclasses
-├── sources/             Async producers: log_tail, journal, results, memory, gpu, demo
-├── screens/
-│   ├── home.py          Landing page: StatusStrip + RecentActivity + CommandInput
-│   ├── dashboard.py     Live monitoring: sprite + sparkline + leaderboard + stream
-│   ├── select_competition.py  DataTable picker (replaces input() in select.py)
-│   ├── setup_wizard.py  RadioSet + Input(password=True) wizard (replaces getpass)
-│   ├── discover.py      Streaming discover + result DataTable + s=select
-│   ├── status.py        Status overview: leaderboard + recent activity + queue
-│   ├── init_progress.py Staged ✓/✗/⏳ checklist while bootstrap runs
-│   ├── confirm_clean.py ModalScreen y/n confirmation
-│   ├── doctor.py        Diagnostic checklist with background workers
-│   ├── command_output.py  Generic subprocess streamer (fallback)
-│   └── raw_stream.py    Full-screen raw log stream
-├── widgets/
-│   ├── command_input.py   Input + Tab autocomplete
-│   ├── status_strip.py    Competition slug + phase + best val_loss + iter counter
-│   ├── recent_activity.py Last 5 experiments with status glyph + delta
-│   ├── queue_summary.py   Next 5 pending queue entries
-│   ├── leaderboard.py     Top-5 by val_loss with medals
-│   └── ... (sprite, metric_chart, experiment_log, current_experiment, session_stats, gpu_stats, live_stream)
-├── themes/              Palette + dark.tcss
-├── assets/sprites/      text_fallback.py (ASCII glyphs when Pillow unavailable)
-└── sprite_loader.py     load_sprite() — PNG from ~/.automedal/sprites/ or generated glyph
-
-tests/                   pytest suite (85 tests)
-├── test_paths.py        Layout dev/user mode path resolution
-├── test_pi_runtime.py   ensure_pi() mock-npm tests
-├── test_phase_machine.py  State reducer
-├── test_log_parser.py   Log line parser
-├── test_sprite_loader.py  Sprite fallback
-├── test_auth.py         ~/.automedal/.env store + pi-auth migration
-└── test_agent_runtime.py  Path-guarded tools + slug parsing + prompt loading
+tests/                            pytest suite (100+ tests)
 ```
 
-### User's project directory (after `automedal init <slug>`)
+### User's project directory
+
+After `automedal init <slug>`, your project looks like this:
 
 ```
 my-kaggle-project/
-├── data/                     raw CSVs + .npy arrays (untracked)
-├── submissions/              Kaggle-ready CSVs (untracked, auto-generated)
-├── journal/                  NNNN-slug.md per experiment
-├── knowledge.md              Curated KB (Strategist rewrites each pass)
-├── experiment_queue.md       Next 5 planned experiments with success_criteria
-├── research_notes.md         Arxiv findings
-├── results.tsv               Flat experiment log
-└── .automedal/               Hidden harness files
-    ├── agent/
-    │   ├── train.py          LLM-editable model code
-    │   └── prepare.py        LLM-editable feature pipeline
+├── data/                         raw CSVs + .npy arrays (untracked)
+├── submissions/                  Kaggle-ready CSVs (auto-generated)
+├── journal/                      NNNN-slug.md per experiment
+├── knowledge.md                  Curated KB
+├── experiment_queue.md           Next 5 planned experiments
+├── research_notes.md             Arxiv findings
+├── results.tsv                   Flat experiment log
+├── agent_loop.log                Human-readable log
+├── agent_loop.events.jsonl       Structured event stream (TUI source)
+└── .automedal/                   Hidden harness files
+    ├── agent/train.py            Agent-editable model code
+    ├── agent/prepare.py          Agent-editable feature pipeline
     ├── configs/competition.yaml
-    └── logs/agent_loop.log
+    └── logs/                     (user-mode only)
 ```
 
 ## Available Libraries
 
-Pre-installed and ready for the agent to use:
+Pre-installed for the agent:
 
 | Category | Libraries |
 |----------|-----------|
 | Gradient Boosting | XGBoost, LightGBM, CatBoost (all GPU-accelerated) |
 | Hyperparameter Optimization | Optuna |
-| AutoML | FLAML (built-in), AutoGluon (`--extra automl`) |
+| AutoML | FLAML (built-in), AutoGluon (`pipx inject automedal autogluon.tabular`) |
 | Deep Learning | PyTorch, TabNet |
 | Feature Engineering | category_encoders, scikit-learn |
 | Data Augmentation | imbalanced-learn (SMOTE, ADASYN) |
-| Research | arxiv (`--extra research`) |
+| Research | arxiv (core dep) |
 
 ## Harness Invariants
 
-`harness/verify_iteration.py` runs after every phase and prints `WARN:` lines on violation. Enforcement is soft by default — violations log a warning but don't abort the loop. The regression gate and success_criteria retry are opt-in.
+`harness/verify_iteration.py` runs after every phase. Enforcement is soft by default — violations log `WARN:` lines but don't abort. The regression gate and success_criteria retry are opt-in.
 
-| Phase | Invariants checked |
-|-------|--------------------|
+| Phase | Invariants |
+|-------|------------|
 | **Strategist** | `knowledge.md` ≤ 80 bullets; every bullet cites an experiment ID; queue has exactly 5 entries; no axis appears more than twice; every entry has Hypothesis/Sketch/Expected/success_criteria |
-| **Researcher** | `research_notes.md` grew by one entry with 2-3 paper bullets and a query header |
-| **Experimenter** | Journal exists with complete frontmatter (incl. `diff_summary`, `val_loss_delta`); valid status; required sections present; KB entries consulted non-empty when KB is non-empty; optional regression gate + success_criteria near-miss retry |
+| **Researcher** | `research_notes.md` grew by one entry with 2–3 paper bullets + query header |
+| **Experimenter** | Journal exists with complete frontmatter; `diff_summary` + `val_loss_delta` present; valid status; KB entries consulted non-empty when KB non-empty; optional regression gate + near-miss retry |
 
 ## Running Without Scout
 
-If you already have the data and just want to run the loop:
+If you already have the data:
 
 ```bash
 # Place train.csv and test.csv in data/
-# Edit configs/competition.yaml by hand (task type, target column, features)
-automedal render    # regenerate AGENTS.md + program.md from templates
-automedal prepare   # generate .npy arrays
+# Edit .automedal/configs/competition.yaml by hand
+automedal render          # regenerate AGENTS.md from the template
+automedal prepare         # generate .npy arrays
 automedal run 10
 ```
 
@@ -417,38 +349,36 @@ automedal run 10
 automedal init spaceship-titanic
 ```
 
-This wipes `data/` of the old competition's files, pulls the new data, resets the memory, and re-renders `AGENTS.md`. Your code in `.automedal/agent/train.py` and `.automedal/agent/prepare.py` is regenerated from the starter template **only if you delete them first** — otherwise bootstrap preserves your current code. Git history keeps both competitions' progress.
+Wipes `data/` of the old competition's files, pulls the new data, resets memory, re-renders `AGENTS.md`. Your code in `.automedal/agent/train.py` and `prepare.py` is preserved unless you delete it first. Git history keeps both competitions' progress.
 
 ## Design Decisions
 
 - **Two editable files.** The agent edits `agent/train.py` (models, HPO, ensembling) and `agent/prepare.py` (features, encoding, augmentation). Full ML pipeline control, manageable scope.
 - **File-based memory over conversational memory.** Every artifact is a git-tracked markdown file. Auto-compaction can't erase `knowledge.md`.
-- **Stateless agent calls.** Three separate invocations with small prompts. No single call accumulates enough context to degrade.
-- **Deterministic harness, LLM-driven phases.** Stagnation detection, experiment IDs, invariant verification, learning-value ranking — all Python. Planning, curation, research synthesis — all LLM.
+- **Stateless agent calls.** Each phase is a fresh kernel invocation with a short focused prompt. No single call accumulates enough context to degrade.
+- **Bespoke kernel, not a framework.** ~300 LOC of async Python + official provider SDKs. No LangChain, no LangGraph, no Node runtime.
+- **Deterministic harness, LLM-driven phases.** Stagnation detection, experiment IDs, invariant verification, dedupe — all Python. Planning, curation, research synthesis — all LLM.
 - **Fixed time budget.** Each experiment runs for at most 10 minutes, making results directly comparable.
-- **GPU-first.** XGBoost `device="cuda"`, LightGBM `device="gpu"`, CatBoost `task_type="GPU"`. 16 GB VRAM utilized aggressively.
+- **GPU-first.** XGBoost `device="cuda"`, LightGBM `device="gpu"`, CatBoost `task_type="GPU"`.
 - **Automatic submissions.** Every time `val_loss` improves, a Kaggle-ready CSV is written to `submissions/`.
-- **TUI-first UX.** `automedal` bare opens a command centre — no flags, no manuals. Every interactive command (`select`, `setup`, `clean`) has a native Textual screen that doesn't block stdin.
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
 | `automedal setup` smoke test fails with "unauthorized" | Key didn't persist. Run `automedal doctor` to check `~/.automedal/.env`, or `export OPENCODE_API_KEY=sk-...` as a fallback |
-| Installed on a fresh machine with no Node | Set `AUTOMEDAL_AGENT=deepagents` — the Python runtime needs no Node at all |
 | `automedal` says "not configured yet" but env var is set | Make sure you exported it in the *same* shell session |
 | `scout/bootstrap.py` reports low schema sniff confidence | TUI will prompt; in shell, pass `--yes` to continue or `--abort-on-warning` to abort |
 | Strategist queues 5 entries on the same axis | `verify_iteration.py` will warn; fix `experiment_queue.md` by hand or delete it |
-| Researcher can't import `arxiv` | `uv sync --extra research`, or `RESEARCH_EVERY=0` to skip |
 | `final_val_loss=` line missing from train.py output | Revert `.automedal/agent/train.py`; the next Experimenter will re-add it |
-| Agent output invisible in terminal | Ensure `run.sh` uses `--mode json` (default since v3.1) |
-| `research_notes.md` is getting very large | Run `automedal compact` — it distils the file to ≤40% its size using the compactor prompt |
 | Regression gate is reverting good experiments | Set `AUTOMEDAL_REGRESSION_GATE=warn` (default) or check if `best_before` is being read correctly |
+| TUI shows stale events | Tail `agent_loop.events.jsonl` to confirm the loop is writing events; delete + restart if rotated |
+| `pipx install` fails on git install | Upgrade pipx: `python3 -m pip install --user --upgrade pipx` |
 
 ## Acknowledgements
 
-Based on [autoresearch](https://github.com/karpathy/autoresearch) by Andrej Karpathy. The core idea — programming research via markdown instructions for AI agents — is his. The three-phase harness, file-based memory, and scout pipeline are AutoMedal-specific extensions for Kaggle-style tabular ML.
+Based on [autoresearch](https://github.com/karpathy/autoresearch) by Andrej Karpathy. The core idea — programming research via markdown instructions for AI agents — is his. The four-phase loop, dedupe, quick-reject, bespoke kernel, file-based memory, and scout pipeline are AutoMedal-specific extensions for Kaggle-style tabular ML.
 
 ## License
 
-MIT. See [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md) for attribution of bundled / depended-upon third-party software (deepagents, langchain, langgraph, rich-pixels, pi coding agent).
+MIT. See [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md) for attribution of bundled third-party software (`anthropic`, `openai`, `rank-bm25`, `jinja2`, `arxiv`, `python-dotenv`, `rich-pixels`).
