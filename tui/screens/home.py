@@ -99,6 +99,8 @@ class HomeScreen(Screen):
     def on_command_input_submitted(self, event: CommandInput.Submitted) -> None:
         self._dispatch_text(event.value)
 
+    _QUIT_ALIASES = {"q", "quit", "exit", ":q", ":quit", ":wq"}
+
     def _dispatch_text(self, text: str) -> None:
         parts = text.strip().split()
         if not parts:
@@ -106,7 +108,7 @@ class HomeScreen(Screen):
         cmd, *args = parts
         cmd = cmd.lower()
 
-        if cmd == "quit":
+        if cmd in self._QUIT_ALIASES:
             self.app.exit()
         elif cmd == "help":
             self.app.action_show_help()

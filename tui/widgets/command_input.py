@@ -175,10 +175,18 @@ class CommandInput(Vertical):
                     inp.cursor_position = len(inp.value)
             return
 
-        # Command autocomplete on the first word
+        # Command autocomplete on the first word. On a single match, append
+        # a trailing space so the user can start typing args immediately —
+        # without this, the cursor sits right after the completed word and
+        # typing space feels like it "did nothing" (the hint row re-renders
+        # the same command).
         first, _, rest = text.partition(" ")
         word = first.lower()
         matches = [c for c in COMMANDS if c.startswith(word)]
         if len(matches) == 1:
-            inp.value = matches[0] + (f" {rest}" if rest else "")
+            completed = matches[0]
+            if rest:
+                inp.value = f"{completed} {rest}"
+            else:
+                inp.value = f"{completed} "
             inp.cursor_position = len(inp.value)
