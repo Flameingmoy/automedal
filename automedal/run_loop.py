@@ -29,6 +29,14 @@ Env vars (with defaults):
     AUTOMEDAL_DEDUPE        1   (set to 0 to disable post-strategist dedupe)
     AUTOMEDAL_DEDUPE_THRESHOLD  5.0  (BM25 score, higher = stricter)
     AUTOMEDAL_REGRESSION_GATE   warn|strict (default warn)
+    AUTOMEDAL_ADVISOR       0   (1 = enable Kimi-K2.6 advisor consults)
+    AUTOMEDAL_ADVISOR_MODEL kimi-k2.6
+    AUTOMEDAL_ADVISOR_BASE_URL  https://opencode.ai/zen/go/v1
+    AUTOMEDAL_ADVISOR_JUNCTIONS stagnation,audit,tool
+    AUTOMEDAL_ADVISOR_MAX_TOKENS_PER_CONSULT  2000
+    AUTOMEDAL_ADVISOR_MAX_TOKENS_PER_ITER     8000
+    AUTOMEDAL_ADVISOR_AUDIT_EVERY  5  (knowledge audit cadence in iterations)
+    AUTOMEDAL_ADVISOR_STAGNATION_EVERY 5 (always-on consult cadence even when not stagnating)
     LOG_FILE                agent_loop.log
     AUTOMEDAL_EVENTS_FILE   agent_loop.events.jsonl
 """
@@ -75,6 +83,7 @@ from automedal.agent.phases import (
     experimenter_eval as p_exp_eval,
     analyzer as p_analyzer,
 )
+from automedal import advisor
 from automedal import dedupe as dedupe_mod
 from automedal import quick_reject as quick_reject_mod
 
@@ -146,6 +155,7 @@ def _getpaths() -> dict[str, Path]:
                                                 cwd / "agent" / "results.tsv")),
         "queue_md":        cwd / "experiment_queue.md",
         "journal_dir":     cwd / "journal",
+        "knowledge_md":    cwd / "knowledge.md",
     }
 
 
@@ -258,6 +268,76 @@ def _parse_final_val_loss(text: str) -> str:
     return m.group(1) if m else "nan"
 
 
+def _build_stagnation_context(
+    journal_dir: Path, queue_md: Path, best: str, last_n: int = 3
+) -> str:
+    """Snapshot for the stagnation advisor consult — recent journals + queue + best."""
+    parts = [f"current best val_loss: {best}"]
+    if journal_dir.is_dir():
+        entries = sorted(journal_dir.glob("*.md"))[-last_n:]
+        for p in entries:
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")[:600]
+            except OSError:
+                continue
+            parts.append(f"\n--- {p.name} ---\n{text}")
+    try:
+        parts.append(
+            f"\n--- experiment_queue.md (current) ---\n"
+            f"{queue_md.read_text(encoding='utf-8')[:2000]}"
+        )
+    except OSError:
+        parts.append("\n--- experiment_queue.md (missing) ---")
+    return "\n".join(parts)
+
+
+def _build_audit_context(
+    knowledge_md: Path, journal_dir: Path, last_n: int = 5
+) -> str:
+    """Snapshot for the knowledge-audit advisor consult — KB + last N journals."""
+    parts = []
+    try:
+        parts.append(
+            f"--- knowledge.md (current) ---\n"
+            f"{knowledge_md.read_text(encoding='utf-8')[:6000]}"
+        )
+    except OSError:
+        parts.append("--- knowledge.md (missing) ---")
+    if journal_dir.is_dir():
+        entries = sorted(journal_dir.glob("*.md"))[-last_n:]
+        for p in entries:
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")[:500]
+            except OSError:
+                continue
+            parts.append(f"\n--- {p.name} ---\n{text}")
+    return "\n".join(parts)
+
+
+def _append_advisor_audit(knowledge_md: Path, text: str) -> int:
+    """Append advisor audit lines as HTML comments — Analyzer reads them next pass.
+
+    Returns the number of comment lines written (0 if no-op).
+    """
+    body = (text or "").strip()
+    if not body or body.lower() == "no-op":
+        return 0
+    lines = ["\n<!-- advisor audit -->\n"]
+    n = 0
+    for ln in body.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        lines.append(f"<!-- advisor: {ln} -->\n")
+        n += 1
+    if n == 0:
+        return 0
+    knowledge_md.parent.mkdir(parents=True, exist_ok=True)
+    with open(knowledge_md, "a", encoding="utf-8") as fh:
+        fh.writelines(lines)
+    return n
+
+
 def _parse_journal_after(journal_dir: Path, exp_id: str) -> dict:
     """Read the journal entry just written for `exp_id`. Returns parsed front-matter fields."""
     matches = sorted(journal_dir.glob(f"{exp_id}-*.md")) if journal_dir.is_dir() else []
@@ -301,6 +381,11 @@ async def _loop(max_iters: int, fast_mode: bool) -> int:
     dedupe_on = _env_bool("AUTOMEDAL_DEDUPE", True)
     regression_gate = os.environ.get("AUTOMEDAL_REGRESSION_GATE", "warn")
 
+    advisor_on = advisor.is_enabled()
+    advisor_model = os.environ.get("AUTOMEDAL_ADVISOR_MODEL", "kimi-k2.6")
+    advisor_audit_every = max(1, _env_int("AUTOMEDAL_ADVISOR_AUDIT_EVERY", 5))
+    advisor_stagnation_every = max(1, _env_int("AUTOMEDAL_ADVISOR_STAGNATION_EVERY", 5))
+
     log.banner([
         "==================================================",
         "  AutoMedal — Four-Phase Loop (bespoke kernel)",
@@ -312,6 +397,7 @@ async def _loop(max_iters: int, fast_mode: bool) -> int:
         f"  Analyzer:       {'on' if analyzer_on else 'off'}",
         f"  Quick-reject:   {'on' if quick_reject_on else 'off'}",
         f"  Dedupe:         {'on' if dedupe_on else 'off'}",
+        f"  Advisor:        {('on (' + advisor_model + ')') if advisor_on else 'off'}",
         f"  Cooldown:       {cooldown_secs}s",
         f"  Train budget:   {train_budget_min}m",
         f"  Log:            {p['log_file']}",
@@ -354,6 +440,7 @@ async def _loop(max_iters: int, fast_mode: bool) -> int:
 
             exp_id = _next_exp_id(p["harness_dir"])
             log.iteration_start(i, max_iters, exp_id)
+            advisor.reset_iteration_budget()
 
             stagnating, best = _check_stagnation(p["harness_dir"], stagnation_k)
             scheduled_research = (research_every > 0 and i % research_every == 0)
@@ -381,8 +468,36 @@ async def _loop(max_iters: int, fast_mode: bool) -> int:
             if pending == 0 or stagnating == "1":
                 reflective = _build_trace_trailer(p["harness_dir"])
                 ranked = _rank_journals(p["harness_dir"])
+
+                # ── Advisor (stagnation gate) ─────────────────────────────
+                advisor_note = ""
+                if advisor.is_enabled("stagnation") and (
+                    stagnating == "1" or (i > 1 and i % advisor_stagnation_every == 0)
+                ):
+                    log.harness(f"dispatching Advisor (stagnation, model={advisor_model})")
+                    adv_sink = sink.with_phase("advisor") if sink else None
+                    opinion = await advisor.consult(
+                        purpose="stagnation",
+                        question=(
+                            "Val loss has not improved for several iterations. "
+                            "What concrete levers should the next Strategist pull?"
+                        ),
+                        context=_build_stagnation_context(
+                            p["journal_dir"], p["queue_md"], best,
+                        ),
+                        events=adv_sink,
+                    )
+                    if opinion.skipped:
+                        log.harness(f"advisor (stagnation) skipped — {opinion.reason}")
+                    else:
+                        advisor_note = opinion.text
+                        log.harness(
+                            f"advisor (stagnation): {opinion.in_tokens}/{opinion.out_tokens} tok"
+                        )
+
                 log.harness(
-                    f"dispatching Strategist (queue_pending={pending}, stagnating={stagnating})"
+                    f"dispatching Strategist (queue_pending={pending}, stagnating={stagnating}, "
+                    f"advisor={'yes' if advisor_note else 'no'})"
                 )
                 rep = await p_strategist.run(
                     provider=provider, events=sink,
@@ -390,6 +505,7 @@ async def _loop(max_iters: int, fast_mode: bool) -> int:
                     stagnating=(stagnating == "1"),
                     best_val_loss=best, pending=pending,
                     reflective=reflective, ranked=ranked,
+                    advisor_note=advisor_note,
                 )
                 if rep.stop != "assistant_done":
                     log.write(f"  [WARN] Strategist stopped {rep.stop}: {rep.error or ''}")
@@ -509,6 +625,28 @@ async def _loop(max_iters: int, fast_mode: bool) -> int:
                 )
                 if rep.stop != "assistant_done":
                     log.write(f"  [WARN] Analyzer stopped {rep.stop}: {rep.error or ''}")
+
+            # ── Advisor (knowledge audit, periodic) ────────────────────
+            if advisor.is_enabled("audit") and i > 0 and i % advisor_audit_every == 0:
+                log.harness(f"dispatching Advisor (audit, model={advisor_model})")
+                adv_sink = sink.with_phase("advisor") if sink else None
+                opinion = await advisor.consult(
+                    purpose="audit",
+                    question=(
+                        "Review knowledge.md for contradictions, stale claims, or missing "
+                        "signals from the last few experiments."
+                    ),
+                    context=_build_audit_context(p["knowledge_md"], p["journal_dir"]),
+                    events=adv_sink,
+                )
+                if opinion.skipped:
+                    log.harness(f"advisor (audit) skipped — {opinion.reason}")
+                else:
+                    n = _append_advisor_audit(p["knowledge_md"], opinion.text)
+                    log.harness(
+                        f"advisor (audit): {opinion.in_tokens}/{opinion.out_tokens} tok, "
+                        f"{n} comment(s) appended"
+                    )
 
             log.iteration_end(i, exp_id)
 

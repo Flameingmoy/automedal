@@ -13,6 +13,7 @@ Event kinds:
     tool_end     — tool call finished (ok=bool, preview=str)
     usage        — token usage for one chat turn
     subagent_start / subagent_end — nested kernel run
+    advisor_consult — one advisor consultation (Kimi K2.6 by default)
     error        — any unexpected failure
 """
 
@@ -167,6 +168,37 @@ class EventSink:
     def subagent_end(self, *, label: str, ok: bool, result_preview: str) -> None:
         self._emit("subagent_end", extra={"label": label, "ok": ok, "preview": _preview(result_preview, 200)})
         self._human(f"  [subagent:{label}] end ok={ok}")
+
+    def advisor_consult(
+        self,
+        *,
+        purpose: str,
+        model: str,
+        in_tokens: int = 0,
+        out_tokens: int = 0,
+        skipped: bool = False,
+        reason: str = "",
+        preview: str = "",
+    ) -> None:
+        self._end_inline()
+        self._emit(
+            "advisor_consult",
+            extra={
+                "purpose": purpose,
+                "model": model,
+                "in": int(in_tokens),
+                "out": int(out_tokens),
+                "skipped": bool(skipped),
+                "reason": reason,
+                "preview": _preview(preview, 280),
+            },
+        )
+        if skipped:
+            self._human(f"  [advisor:{purpose}] skipped ({reason or 'no_reason'})")
+        else:
+            self._human(
+                f"  [advisor:{purpose}] {model} ({in_tokens}/{out_tokens}) — {_preview(preview, 120)}"
+            )
 
     def error(self, *, where: str, exc: BaseException) -> None:
         self._end_inline()

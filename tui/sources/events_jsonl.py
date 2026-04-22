@@ -105,6 +105,18 @@ def _render(ev: dict) -> Optional[str]:
         label = ev.get("label", "?")
         ok = ev.get("ok", True)
         return f"{indent}[subagent:{label}] end ok={ok}"
+    if kind == "advisor_consult":
+        purpose = ev.get("purpose", "?")
+        model = ev.get("model", "?")
+        if ev.get("skipped"):
+            reason = ev.get("reason", "") or "no_reason"
+            return f"{indent}[advisor:{purpose}] skipped ({reason})"
+        preview = (ev.get("preview") or "").replace("\n", " ")
+        if len(preview) > 120:
+            preview = preview[:117] + "..."
+        in_t = ev.get("in", 0)
+        out_t = ev.get("out", 0)
+        return f"{indent}[advisor:{purpose}] {model} ({in_t}/{out_t}) — {preview}"
     if kind == "usage":
         return None  # boring; surfaced in phase_end
     if kind == "error":

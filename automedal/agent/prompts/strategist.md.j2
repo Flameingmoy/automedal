@@ -101,7 +101,16 @@ Current iteration: {{ iteration }} / {{ max_iters }}
 Stagnating: {{ stagnating }}
 Current best val_loss: {{ best_val_loss }}
 Pending queue entries: {{ pending }}
+{% if advisor_note %}
+## Advisor directive (weigh, don't obey blindly)
 
+A frontier-model advisor reviewed the recent state and offered the levers
+below. Treat them as one strong opinion among others — not as commandments.
+If a lever conflicts with what the KB clearly shows, document the conflict
+in `## Open questions` and prefer the KB.
+
+{{ advisor_note }}
+{% endif %}
 ## Reflective trace (last 3 experiments)
 {{ reflective }}
 

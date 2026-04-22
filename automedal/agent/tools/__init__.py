@@ -18,11 +18,12 @@ from automedal.agent.tools.shell import RUN_SHELL
 from automedal.agent.tools.cognition import RECALL, COGNITION_TOOLS, bm25_score_pairs
 from automedal.agent.tools.arxiv import ARXIV_SEARCH
 from automedal.agent.tools.subagent import make_subagent_tool
+from automedal.agent.tools.advisor import make_advisor_tool
 
 __all__ = [
     "Tool", "ToolResult", "REPO_ROOT", "_safe",
     "READ_FILE", "WRITE_FILE", "EDIT_FILE", "LIST_DIR", "GREP", "RUN_SHELL",
     "RECALL", "ARXIV_SEARCH",
     "FS_TOOLS", "COGNITION_TOOLS",
-    "bm25_score_pairs", "make_subagent_tool",
+    "bm25_score_pairs", "make_subagent_tool", "make_advisor_tool",
 ]

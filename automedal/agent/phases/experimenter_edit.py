@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from automedal import advisor
 from automedal.agent.events import EventSink
 from automedal.agent.kernel import RunReport
 from automedal.agent.phases._common import run_phase
 from automedal.agent.tools import (
-    READ_FILE, WRITE_FILE, EDIT_FILE, LIST_DIR, GREP, RECALL, RUN_SHELL,
+    EDIT_FILE, GREP, LIST_DIR, READ_FILE, RECALL, RUN_SHELL, WRITE_FILE,
+    make_advisor_tool,
 )
 
 
@@ -24,6 +26,11 @@ async def run(
     prev_loss: float | str = "",
     max_steps: int = 50,
 ) -> RunReport:
+    def _extra_tools(sink):
+        if advisor.is_enabled("tool"):
+            return [make_advisor_tool(events=sink)]
+        return []
+
     return await run_phase(
         phase="experimenter",
         provider=provider,
@@ -36,4 +43,5 @@ async def run(
             "retry": retry,
             "prev_loss": prev_loss,
         },
+        extra_tools_factory=_extra_tools,
     )
