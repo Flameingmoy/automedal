@@ -244,11 +244,15 @@ class AutoMedalApp(App):
                 self.push_screen(CommandOutputScreen(cmd=cmd, args=args, name="cmd-output"))
 
     async def _spawn_run(self, args: list[str]) -> None:
+        from automedal.run_args import parse_run_args
+
+        args, env_overrides = parse_run_args(args)
         n = args[0] if args else "50"
 
         env = dict(os.environ)
         if self._layout is not None:
             env.update(self._layout.as_env())
+        env.update(env_overrides)
 
         # Spawn `python -m automedal run N` — dashboard tails the log file
         self._run_proc = await asyncio.create_subprocess_exec(

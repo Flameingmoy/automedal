@@ -140,11 +140,15 @@ Each iteration is a sequence of short, **stateless** LLM calls. No single call l
 
 Inspired by Anthropic's [advisor strategy](https://claude.com/blog/the-advisor-strategy): the cheap executor (`minimax-m2.7`) drives the loop; a frontier model (`kimi-k2.6` via opencode-go, same `OPENCODE_API_KEY`) is consulted at three junctions only — **stagnation gate** before the Strategist, **knowledge audit** every Nth Analyzer pass, and an opt-in **`consult_advisor` tool** the worker can call (Strategist + Experimenter-edit only, max 1 use per phase). The advisor never calls tools — it returns a short directive the executor weighs.
 
-Off by default. Turn on with:
+Off by default. Turn on with the `--advisor` flag (preferred) or the env var:
 
 ```bash
-AUTOMEDAL_ADVISOR=1 automedal run 10
+automedal run 10 --advisor                 # uses default model (kimi-k2.6)
+automedal run 10 --advisor claude-sonnet-4-5   # override model
+AUTOMEDAL_ADVISOR=1 automedal run 10       # equivalent env-var form
 ```
+
+The flag works in the TUI too — type `run 10 --advisor <Tab>` and it autocompletes from the live model list at `<base_url>/models`. Refresh manually with `automedal models refresh`.
 
 | Env var | Default | Purpose |
 |---------|---------|---------|

@@ -18,6 +18,11 @@ from automedal.advisor.budget import (
     remaining_tokens,
     reset_iteration_budget,
 )
+from automedal.advisor.models import (
+    cache_path as models_cache_path,
+    list_models,
+    refresh_models,
+)
 
 __all__ = [
     "AdvisorOpinion",
@@ -27,4 +32,7 @@ __all__ = [
     "remaining_tokens",
     "consume_tokens",
     "budget_state",
+    "list_models",
+    "refresh_models",
+    "models_cache_path",
 ]

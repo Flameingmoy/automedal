@@ -56,6 +56,7 @@ def dispatch(cmd: str, args: list[str]) -> int:
         "prepare":   _cmd_prepare,
         "render":    _cmd_render,
         "run":       _cmd_run,
+        "models":    _cmd_models,
         "status":    _cmd_status,
         "clean":     _cmd_clean,
         "help":      _cmd_help,
@@ -290,12 +291,43 @@ def _cmd_render(args, layout, env) -> int:
 
 
 def _cmd_run(args, layout, env) -> int:
+    from automedal.run_args import parse_run_args
+
+    args, env_overrides = parse_run_args(args)
+    if env_overrides:
+        env = {**env, **env_overrides}
+
     n = args[0] if args else "50"
     fast = args[1] if len(args) > 1 else ""
     call_args = [n, fast] if fast else [n]
     return subprocess.call(
         [sys.executable, "-m", "automedal.run_loop"] + call_args, env=env
     )
+
+
+def _cmd_models(args, layout, env) -> int:
+    """List or refresh the cached advisor-model autocomplete list."""
+    from automedal import advisor
+
+    sub = args[0] if args else "list"
+
+    if sub in ("refresh", "--refresh", "-r"):
+        n, where = advisor.refresh_models()
+        if n == 0:
+            print(f"⚠  refresh failed: {where}")
+            return 1
+        print(f"✓ {n} models cached from {where}")
+        print(f"  ({advisor.models_cache_path()})")
+        return 0
+
+    models = advisor.list_models()
+    if not models:
+        print("(no models cached — run 'automedal models refresh')")
+        return 1
+    print(f"# {len(models)} models in {advisor.models_cache_path()}")
+    for m in models:
+        print(f"  {m}")
+    return 0
 
 
 def _cmd_status(args, layout, env) -> int:
@@ -358,9 +390,13 @@ Competition setup:
   automedal render               re-render AGENTS.md from template
 
 Loop:
-  automedal run [N]              start the three-phase loop (default 50)
+  automedal run [N] [--advisor [model]]
+                                 start the loop (default 50). --advisor enables
+                                 the Kimi K2.6 second-opinion loop; pass a model
+                                 id to override (autocompletes in the TUI).
   automedal status               quick health check (knowledge + last results)
   automedal clean                wipe memory files + results.tsv (confirms first)
+  automedal models [refresh]     list cached advisor models (--refresh re-fetches)
 
 Monitor:
   automedal                      open TUI home screen (command palette)

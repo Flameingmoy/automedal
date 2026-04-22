@@ -11,8 +11,46 @@ from textual.widgets import Input, Static
 
 COMMANDS = [
     "run", "init", "discover", "select", "doctor", "status",
-    "clean", "prepare", "render", "setup", "help", "quit",
+    "clean", "prepare", "render", "setup", "models", "help", "quit",
 ]
+
+
+def _models_for_autocomplete() -> list[str]:
+    """Cached advisor models for the `--advisor <TAB>` completer.
+
+    Returns [] on any failure — autocomplete just shows nothing in that case.
+    Cheap on the hot path: hits ~/.automedal/models_cache.json, no network.
+    """
+    try:
+        from automedal.advisor import list_models
+        return list_models()
+    except Exception:
+        return []
+
+
+def _split_for_advisor(text: str) -> tuple[bool, str, str]:
+    """If `text` ends mid-`--advisor <prefix>`, return (True, prefix, head).
+
+    `head` is the text up to and including `--advisor `, so the caller can
+    splice the completion: head + completion.
+    Otherwise returns (False, "", text).
+    """
+    parts = text.split(" ")
+    if "--advisor" not in parts:
+        return (False, "", text)
+    # Find the last --advisor token; complete the token immediately after it.
+    idx = len(parts) - 1 - list(reversed(parts)).index("--advisor")
+    if idx == len(parts) - 1:
+        # Cursor sits right after `--advisor ` with no prefix typed yet
+        head = " ".join(parts[: idx + 1]) + " "
+        return (True, "", head)
+    prefix = parts[idx + 1]
+    head = " ".join(parts[: idx + 1]) + " "
+    # Only treat as model-completion if the prefix has no spaces past it (it's
+    # still the trailing token).
+    if idx + 1 == len(parts) - 1:
+        return (True, prefix, head)
+    return (False, "", text)
 
 _TRAILING_DIGITS = re.compile(r"^([a-zA-Z]+)(\d+)$")
 
@@ -67,12 +105,25 @@ class CommandInput(Vertical):
 
     def on_input_changed(self, event: Input.Changed) -> None:
         text = normalize(event.value or "")
-        word = (text.split() or [""])[0].lower()
-        if not word:
-            hint = "  ".join(COMMANDS[:6])
+        is_adv, prefix, _head = _split_for_advisor(text)
+        if is_adv:
+            models = _models_for_autocomplete()
+            matches = [m for m in models if m.startswith(prefix)] if prefix else models
+            if not models:
+                hint = "(no models cached — run 'automedal models refresh')"
+            elif not matches:
+                hint = f"(no model starts with {prefix!r})"
+            else:
+                hint = "  ".join(matches[:6])
+                if len(matches) > 6:
+                    hint += f"  +{len(matches) - 6}"
         else:
-            matches = [c for c in COMMANDS if c.startswith(word)]
-            hint = "  ".join(matches[:6]) if matches else "(no matches)"
+            word = (text.split() or [""])[0].lower()
+            if not word:
+                hint = "  ".join(COMMANDS[:6])
+            else:
+                matches = [c for c in COMMANDS if c.startswith(word)]
+                hint = "  ".join(matches[:6]) if matches else "(no matches)"
         try:
             self.query_one("#ci-hints", Static).update(f"  {hint}")
         except Exception:
@@ -100,6 +151,31 @@ class CommandInput(Vertical):
         text = normalize(inp.value)
         if not text:
             return
+
+        # Model autocomplete after `--advisor `
+        is_adv, prefix, head = _split_for_advisor(text)
+        if is_adv:
+            models = _models_for_autocomplete()
+            matches = [m for m in models if m.startswith(prefix)]
+            if len(matches) == 1:
+                inp.value = head + matches[0]
+                inp.cursor_position = len(inp.value)
+            elif len(matches) > 1:
+                # Complete to the longest common prefix so a second Tab narrows.
+                lcp = matches[0]
+                for m in matches[1:]:
+                    while not m.startswith(lcp):
+                        lcp = lcp[:-1]
+                        if not lcp:
+                            break
+                    if not lcp:
+                        break
+                if lcp and lcp != prefix:
+                    inp.value = head + lcp
+                    inp.cursor_position = len(inp.value)
+            return
+
+        # Command autocomplete on the first word
         first, _, rest = text.partition(" ")
         word = first.lower()
         matches = [c for c in COMMANDS if c.startswith(word)]
