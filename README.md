@@ -136,6 +136,29 @@ Each iteration is a sequence of short, **stateless** LLM calls. No single call l
 | **Analyzer** | on | `AUTOMEDAL_ANALYZER` | Per-iteration knowledge compression |
 | **Success criteria** | always | — | Each queue entry carries a measurable target; near-misses (≤1%) trigger one free retry |
 
+### Advisor (Kimi K2.6 second-opinion loop)
+
+Inspired by Anthropic's [advisor strategy](https://claude.com/blog/the-advisor-strategy): the cheap executor (`minimax-m2.7`) drives the loop; a frontier model (`kimi-k2.6` via opencode-go, same `OPENCODE_API_KEY`) is consulted at three junctions only — **stagnation gate** before the Strategist, **knowledge audit** every Nth Analyzer pass, and an opt-in **`consult_advisor` tool** the worker can call (Strategist + Experimenter-edit only, max 1 use per phase). The advisor never calls tools — it returns a short directive the executor weighs.
+
+Off by default. Turn on with:
+
+```bash
+AUTOMEDAL_ADVISOR=1 automedal run 10
+```
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `AUTOMEDAL_ADVISOR` | `0` | Master on/off |
+| `AUTOMEDAL_ADVISOR_MODEL` | `kimi-k2.6` | Advisor model id |
+| `AUTOMEDAL_ADVISOR_BASE_URL` | `https://opencode.ai/zen/go/v1` | OpenAI-compatible endpoint |
+| `AUTOMEDAL_ADVISOR_JUNCTIONS` | `stagnation,audit,tool` | Allowlist (any subset) |
+| `AUTOMEDAL_ADVISOR_MAX_TOKENS_PER_CONSULT` | `2000` | Per-call output cap |
+| `AUTOMEDAL_ADVISOR_MAX_TOKENS_PER_ITER` | `8000` | Hard ceiling per iteration |
+| `AUTOMEDAL_ADVISOR_AUDIT_EVERY` | `5` | Knowledge-audit cadence (iterations) |
+| `AUTOMEDAL_ADVISOR_STAGNATION_EVERY` | `5` | Periodic stagnation check (iterations) |
+
+Every consult emits an `advisor_consult` JSONL event (`purpose`, `model`, `in_tokens`, `out_tokens`, `skipped`, `preview`) and renders in the TUI event stream. Verify the wiring with `AUTOMEDAL_ADVISOR=1 automedal doctor`.
+
 ## TUI — Command Centre
 
 `automedal` with no arguments opens a Textual TUI. You can run every command from its palette instead of the shell.

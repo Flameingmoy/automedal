@@ -216,9 +216,52 @@ def _cmd_doctor(args, layout, env) -> int:
     ok, detail = smoke(provider, model)
     if ok:
         print(f"  ✓ {detail}")
-        return 0
-    print(f"  ⚠  {detail}")
-    return 1
+        rc = 0
+    else:
+        print(f"  ⚠  {detail}")
+        rc = 1
+
+    # ── advisor smoke (only when AUTOMEDAL_ADVISOR=1) ─────────────────────
+    if env.get("AUTOMEDAL_ADVISOR", "").strip().lower() in ("1", "true", "yes", "on"):
+        print()
+        print("── advisor (Kimi K2.6) ──")
+        adv_model = env.get("AUTOMEDAL_ADVISOR_MODEL", "kimi-k2.6")
+        adv_base = env.get("AUTOMEDAL_ADVISOR_BASE_URL", "https://opencode.ai/zen/go/v1")
+        adv_max_consult = env.get("AUTOMEDAL_ADVISOR_MAX_TOKENS_PER_CONSULT", "2000")
+        adv_max_iter = env.get("AUTOMEDAL_ADVISOR_MAX_TOKENS_PER_ITER", "8000")
+        junctions = env.get("AUTOMEDAL_ADVISOR_JUNCTIONS", "stagnation,audit,tool")
+        print(f"  model:     {adv_model}")
+        print(f"  base_url:  {adv_base}")
+        print(f"  junctions: {junctions}")
+        print(f"  budget:    {adv_max_consult} tok/consult, {adv_max_iter} tok/iter")
+        if not env.get("OPENCODE_API_KEY"):
+            print("  ⚠  OPENCODE_API_KEY missing — advisor will skip every call")
+        else:
+            import asyncio
+            from automedal import advisor as _adv
+
+            async def _ping():
+                # Use purpose="tool" since the tool prompt template is the
+                # cheapest/shortest. Strict junction allowlist still applies.
+                return await _adv.consult(
+                    purpose="tool",
+                    question="Reply with the single word READY.",
+                    context="Smoke test from automedal doctor.",
+                    max_tokens=16,
+                )
+            try:
+                op = asyncio.run(_ping())
+            except Exception as exc:
+                print(f"  ⚠  smoke failed: {type(exc).__name__}: {exc}")
+                return rc or 1
+            if op.skipped:
+                print(f"  ⚠  skipped: {op.reason}")
+                if op.reason.startswith("disabled:"):
+                    print(f"      (junction not in {junctions})")
+            else:
+                preview = (op.text or "").replace("\n", " ").strip()[:80]
+                print(f"  ✓ {adv_model} ({op.in_tokens}/{op.out_tokens} tok) — {preview}")
+    return rc
 
 
 def _cmd_discover(args, layout, env) -> int:
@@ -335,5 +378,15 @@ Env vars honored by 'automedal run':
   RESEARCH_EVERY         scheduled research cadence (default 10, 0 disables)
   LOG_FILE               human log path (default agent_loop.log)
   AUTOMEDAL_EVENTS_FILE  JSONL event sink (default agent_loop.events.jsonl)
+
+Advisor (Kimi K2.6 second-opinion loop, off by default — see README):
+  AUTOMEDAL_ADVISOR                        1=on, 0=off (default 0)
+  AUTOMEDAL_ADVISOR_MODEL                  default kimi-k2.6
+  AUTOMEDAL_ADVISOR_BASE_URL               default https://opencode.ai/zen/go/v1
+  AUTOMEDAL_ADVISOR_JUNCTIONS              stagnation,audit,tool (any subset)
+  AUTOMEDAL_ADVISOR_MAX_TOKENS_PER_CONSULT default 2000
+  AUTOMEDAL_ADVISOR_MAX_TOKENS_PER_ITER    default 8000 (hard ceiling)
+  AUTOMEDAL_ADVISOR_AUDIT_EVERY            knowledge-audit cadence (default 5)
+  AUTOMEDAL_ADVISOR_STAGNATION_EVERY       periodic stagnation gate (default 5)
 """)
     return 0
