@@ -41,6 +41,7 @@ def test_strategist_renders_reflective_trace():
         pending=2,
         reflective="(trace body)",
         ranked="(ranked body)",
+        advisor_note="",
     )
     assert "Upcoming experiment: 0042" in out
     assert "Current iteration: 7 / 20" in out
@@ -111,7 +112,7 @@ def _dummy_slots(phase: str) -> dict:
         base.update(trigger="scheduled", stagnating=False, scheduled_research=True)
     elif phase == "strategist":
         base.update(iteration=1, max_iters=10, stagnating=False, pending=0,
-                    reflective="(empty)", ranked="(empty)")
+                    reflective="(empty)", ranked="(empty)", advisor_note="")
     elif phase == "experimenter":
         base.update(retry=False, prev_loss="")
     elif phase == "experimenter_eval":
