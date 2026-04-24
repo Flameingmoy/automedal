@@ -205,6 +205,31 @@ automedal tui --demo    # replay a fixture log — no live run required
 
 Drop PNGs into `~/.automedal/sprites/dark/<phase>/24/frame_00.png` (phases: `research`, `coding`, `experiment`, `submitting`, `idle`, `frozen`). Missing files fall back to the built-in geometric glyph. See [`tui/sprite_loader.py`](tui/sprite_loader.py) for the full layout.
 
+### Go TUI (Charmbracelet shell) — optional, recommended
+
+`automedal` detects an optional Go-based TUI and hands off to it on launch.
+The Go shell has native ANSI rendering, ~50 ms first-frame latency (vs ~1.5 s for
+the Python Textual TUI), and ~14 MB RSS at idle. It tails the same
+`agent_loop.events.jsonl` — no Python re-imports each time you type a command.
+
+Build and install from the monorepo:
+
+```bash
+cd tui-go
+go build -o automedal-tui .          # 14 MB static binary
+cp automedal-tui ~/.local/bin/       # or any dir on $PATH
+```
+
+`automedal` then uses it automatically. Opt-out:
+
+```bash
+AUTOMEDAL_NO_GO_TUI=1 automedal      # force the Python TUI
+automedal tui --demo                 # --demo always uses the Python TUI (fixture replay)
+```
+
+Override path via `AUTOMEDAL_TUI_GO_BIN=/path/to/automedal-tui` (useful during
+development). Plan and architecture: [`docs/plans/go-tui-migration.md`](docs/plans/go-tui-migration.md).
+
 ## CLI Reference
 
 | Command | Description |

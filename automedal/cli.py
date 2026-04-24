@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -53,8 +54,50 @@ def _require_textual() -> None:
         )
 
 
+def _go_tui_path() -> str | None:
+    """Return path to the Go TUI binary, or None if unavailable.
+
+    Checked locations (in order):
+      1. $AUTOMEDAL_TUI_GO_BIN  (explicit override)
+      2. automedal-tui on $PATH
+      3. ./tui-go/automedal-tui  (in-tree development build)
+
+    Returns None if AUTOMEDAL_NO_GO_TUI=1 — keeps an escape hatch for
+    debugging the Python fallback path.
+    """
+    if os.environ.get("AUTOMEDAL_NO_GO_TUI") == "1":
+        return None
+    override = os.environ.get("AUTOMEDAL_TUI_GO_BIN")
+    if override and os.path.isfile(override) and os.access(override, os.X_OK):
+        return override
+    found = shutil.which("automedal-tui")
+    if found:
+        return found
+    local = Path.cwd() / "tui-go" / "automedal-tui"
+    if local.is_file() and os.access(str(local), os.X_OK):
+        return str(local)
+    return None
+
+
+def _exec_go_tui(path: str, extra_args: list[str]) -> None:
+    """Replace the Python process with the Go binary — never returns."""
+    _prepare_env()
+    argv = [path] + list(extra_args)
+    os.execvp(path, argv)
+
+
 def _launch_tui_home(auto_spawn: tuple[str, list[str]] | None = None) -> None:
-    """Open the TUI directly to HomeScreen, optionally auto-spawning a command."""
+    """Open the TUI directly to HomeScreen, optionally auto-spawning a command.
+
+    Prefers the Go TUI if the binary is present; falls back to the Python
+    Textual TUI otherwise. The Go binary owns its own first-frame path —
+    we just hand off argv.
+    """
+    # Go shell doesn't yet accept auto-spawn; fall back for that case.
+    if auto_spawn is None:
+        if go := _go_tui_path():
+            _exec_go_tui(go, [])
+            return
     _require_textual()
     _prepare_env()
     _ensure_logo()
@@ -64,7 +107,17 @@ def _launch_tui_home(auto_spawn: tuple[str, list[str]] | None = None) -> None:
 
 
 def _launch_tui_with_args(extra_args: list[str]) -> None:
-    """Delegate to tui.__main__ (supports --demo, --log-file, etc.)."""
+    """Delegate to tui.__main__ (supports --demo, --log-file, etc.).
+
+    If the Go TUI is present AND the caller didn't pass Python-only flags
+    (--demo, --log-file), hand off to Go. Otherwise fall through.
+    """
+    python_only = {"--demo", "--log-file", "--theme"}
+    has_py_only = any(a in python_only or a.startswith("--log-file=") for a in extra_args)
+    if not has_py_only:
+        if go := _go_tui_path():
+            _exec_go_tui(go, extra_args)
+            return
     _require_textual()
     _prepare_env()
     _ensure_logo()

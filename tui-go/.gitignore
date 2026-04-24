@@ -1,0 +1,4 @@
+# Build artifacts
+/automedal-tui
+/automedal-tui.exe
+*.test
