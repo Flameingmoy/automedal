@@ -33,7 +33,7 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) 
 curl -LsSf https://raw.githubusercontent.com/Flameingmoy/automedal/main/install.sh | bash
 ```
 
-The installer verifies Python ≥ 3.11, installs `pipx` if needed, installs AutoMedal into an isolated `pipx` venv, and creates `~/.automedal/` (mode 0700) for credentials, logs, and sprites.
+The installer verifies Python ≥ 3.11, installs `pipx` if needed, installs AutoMedal into an isolated `pipx` venv, and creates `~/.automedal/` (mode 0700) for credentials and logs. The Go TUI binary is built separately from `tui-go/` — see [TUI — Command Centre](#tui--command-centre).
 
 Upgrade later with the same command, or:
 
@@ -74,7 +74,6 @@ On first invocation AutoMedal creates:
 |------|------|---------|
 | `~/.automedal/` | 0700 | Per-user root |
 | `~/.automedal/.env` | 0600 | Provider API keys (written by `automedal setup`) |
-| `~/.automedal/sprites/` | 0700 | Optional PNG overrides for TUI phase sprites |
 
 Per-competition artifacts are created by `automedal init <slug>` (see [user project layout](#users-project-directory)).
 
@@ -165,70 +164,72 @@ Every consult emits an `advisor_consult` JSONL event (`purpose`, `model`, `in_to
 
 ## TUI — Command Centre
 
-`automedal` with no arguments opens a Textual TUI. You can run every command from its palette instead of the shell.
+`automedal` with no arguments execs the Go shell (`tui-go/`) — a single
+static binary built on Charmbracelet's Bubbletea stack. Native ANSI,
+~10 ms first-frame latency, ~16 MB idle RSS. It tails the same
+`agent_loop.events.jsonl` the kernel writes, with no Python re-imports
+on every command.
 
-```
-┌─ AutoMedal · playground-s6e4 · val_loss 0.0503 · iter 24/50 ─────┐
-│                                                                  │
-│  ● recent activity                                               │
-│    #24 irredundant-kfold-hpo   ✓  0.0503  (-0.0001)              │
-│    #23 catboost-depth-tune     ✗  0.0508                         │
-│    #22 lgbm-bagging            ✓  0.0504  (-0.0014)              │
-│                                                                  │
-│  [r] run 50  [d] discover  [i] init  [s] status  [q] quit        │
-│                                                                  │
-│  > _                                    (type command, Enter)    │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-| Key / command | Action |
-|---|---|
-| `run [N]` / `r` | Launch N iterations → pushes live Dashboard |
-| `discover` / `d` | Ranked competition DataTable + s=select |
-| `select` | DataTable picker → bootstrap selected competition |
-| `init <slug>` / `i` | Staged progress screen while bootstrapping |
-| `status` / `s` | Full status: leaderboard + recent activity + queue |
-| `setup` | Provider wizard with hidden API-key input |
-| `doctor` | Diagnostic checklist (SDKs, env file, provider, smoke test) |
-| `clean` | Confirmation modal before wiping memory |
-| `q` | Quit |
-
-### Live Dashboard
-
-During a run, the dashboard shows: phase sprite, val_loss sparkline, top-5 leaderboard with medals, scrollable experiment log, current-experiment card, GPU util/VRAM/temp, session totals, and a phase-colored live log stream. `ctrl+o` flips to a full-screen raw stream. `ctrl+c` sends SIGTERM so the harness finishes the current iteration cleanly.
-
-```bash
-automedal tui --demo    # replay a fixture log — no live run required
-```
-
-### Custom sprites
-
-Drop PNGs into `~/.automedal/sprites/dark/<phase>/24/frame_00.png` (phases: `research`, `coding`, `experiment`, `submitting`, `idle`, `frozen`). Missing files fall back to the built-in geometric glyph. See [`tui/sprite_loader.py`](tui/sprite_loader.py) for the full layout.
-
-### Go TUI (Charmbracelet shell) — optional, recommended
-
-`automedal` detects an optional Go-based TUI and hands off to it on launch.
-The Go shell has native ANSI rendering, ~50 ms first-frame latency (vs ~1.5 s for
-the Python Textual TUI), and ~14 MB RSS at idle. It tails the same
-`agent_loop.events.jsonl` — no Python re-imports each time you type a command.
-
-Build and install from the monorepo:
+### Build
 
 ```bash
 cd tui-go
-go build -o automedal-tui .          # 14 MB static binary
+go build -o automedal-tui .          # ~11 MB static binary
 cp automedal-tui ~/.local/bin/       # or any dir on $PATH
 ```
 
-`automedal` then uses it automatically. Opt-out:
+After that, `automedal` just works. Override location with
+`AUTOMEDAL_TUI_GO_BIN=/abs/path/automedal-tui`. If the binary is missing,
+the CLI prints the build command and exits non-zero — use
+`automedal dispatch <cmd>` for headless runs.
 
-```bash
-AUTOMEDAL_NO_GO_TUI=1 automedal      # force the Python TUI
-automedal tui --demo                 # --demo always uses the Python TUI (fixture replay)
-```
+### Screens
 
-Override path via `AUTOMEDAL_TUI_GO_BIN=/path/to/automedal-tui` (useful during
-development). Plan and architecture: [`docs/plans/go-tui-migration.md`](docs/plans/go-tui-migration.md).
+| Screen | What's on it |
+|--------|--------------|
+| **Home** | Unicode block-char logo, status pills (phase / iter / advisor), recent journal entries, command palette with Tab autocomplete (incl. `--advisor <TAB>` against the live model cache) |
+| **Dashboard** | Braille sparkline of running-best loss, `results.tsv` leaderboard, live JSONL stream, GPU panel (via `nvidia-smi`) |
+| **Run** | Subprocess streamer for `automedal run N` — `q` sends SIGTERM and returns home cleanly |
+| **Knowledge** | `knowledge.md` rendered via Glamour (scrollable viewport) |
+| **Help** | Keybindings reference |
+
+### Commands
+
+Same palette as the dispatch list: `run [N] [--advisor [model]]`, `init <slug>`,
+`discover`, `select`, `doctor`, `status`, `clean`, `setup`, `models`, plus
+quit aliases (`q`, `quit`, `exit`, `:q`, `:quit`, `:wq`) — these never
+spawn a subprocess. Anything else is forwarded to `automedal <cmd>` as a
+child process, streamed line-by-line.
+
+## Roadmap — full-Go shell
+
+The kernel (agent loop, advisor, Kaggle SDK) stays Python. The shell is
+already Go. We're tracking Charmbracelet's
+[crush](https://github.com/charmbracelet/crush) as the reference for how
+far that split can go — their `internal/ui/{chat,dialog,common}/` layout
+is the next target for us. Concretely:
+
+- **Per-tool renderers.** Crush has one Go file per tool type
+  (`ui/chat/{bash,fetch,file,mcp,search,todos,tools,unified_diff}.go`);
+  we currently format every tool identically. Adopting their split
+  unlocks per-tool visual affordances without ballooning a single
+  switch-statement.
+- **Status-icon framing.** `●` header with `✓` / `✗` / `⏳` state,
+  collapsible result block (default 10 lines, expand on demand),
+  syntax-highlighted diff / code output.
+- **Dialog layer.** Crush has modals for models, commands, permissions,
+  quit, sessions — we have `help` and that's it. A permissions modal
+  would let us gate `submit_to_kaggle` behind an approval prompt.
+- **Session persistence.** Crush persists sessions under
+  `$XDG_DATA_HOME/crush/`; we rely on the journal + `results.tsv` in
+  the working directory. A session sidebar + history viewer is within
+  reach once we adopt their schema.
+- **Gradient styling.** `internal/ui/styles/grad.go` is their signature
+  look — one file, cross-cutting. Small lift, big polish.
+
+Not on the roadmap: the MCP transport layer, LSP integration, or
+Catwalk-style external model catalogs — those solve problems we don't
+have.
 
 ## CLI Reference
 
@@ -328,13 +329,15 @@ harness/                          Deterministic automation (no LLM)
 scout/                            Competition discovery + bootstrap
 ├── discover.py / select.py / bootstrap.py / sniff.py / scoring.py / render.py
 
-tui/                              Textual TUI
-├── app.py  · state.py  · events.py
-├── sources/                      log_tail, events_jsonl, journal, results, memory, gpu, demo
-├── screens/                      home, dashboard, select_competition, setup_wizard, …
-└── widgets/                      sprite, metric_chart, leaderboard, live_stream, …
+tui-go/                           Go TUI (Charmbracelet stack) — user-facing shell
+├── main.go                       tea.Program + screen router
+├── theme/                        Lipgloss palette (Dracula)
+├── models/                       home · dashboard · run · help · knowledge screens
+├── components/                   logo, statusbar, palette, sparkline, leaderboard, gpu
+├── events/                       fsnotify-based JSONL tailer + Format/Reduce
+└── proc/                         exec.CommandContext subprocess streamer
 
-tests/                            pytest suite (100+ tests)
+tests/                            pytest suite (Python) — Go tests live in tui-go/**/_test.go
 ```
 
 ### User's project directory
@@ -425,6 +428,7 @@ Wipes `data/` of the old competition's files, pulls the new data, resets memory,
 | `final_val_loss=` line missing from train.py output | Revert `.automedal/agent/train.py`; the next Experimenter will re-add it |
 | Regression gate is reverting good experiments | Set `AUTOMEDAL_REGRESSION_GATE=warn` (default) or check if `best_before` is being read correctly |
 | TUI shows stale events | Tail `agent_loop.events.jsonl` to confirm the loop is writing events; delete + restart if rotated |
+| `automedal-tui (Go binary) not found` | Build it: `cd tui-go && go build -o automedal-tui .`; then copy onto `$PATH` or set `AUTOMEDAL_TUI_GO_BIN` |
 | `pipx install` fails on git install | Upgrade pipx: `python3 -m pip install --user --upgrade pipx` |
 
 ## Acknowledgements
@@ -433,4 +437,4 @@ Based on [autoresearch](https://github.com/karpathy/autoresearch) by Andrej Karp
 
 ## License
 
-MIT. See [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md) for attribution of bundled third-party software (`anthropic`, `openai`, `rank-bm25`, `jinja2`, `arxiv`, `python-dotenv`, `rich-pixels`).
+MIT. See [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md) for attribution of bundled third-party software (`anthropic`, `openai`, `rank-bm25`, `jinja2`, `arxiv`, `python-dotenv`, plus the Charmbracelet Go stack — `bubbletea`, `bubbles`, `lipgloss`, `glamour`, `fsnotify` — in `tui-go/`).
