@@ -205,6 +205,21 @@ class EventSink:
         self._emit("error", extra={"where": where, "type": type(exc).__name__, "msg": str(exc)})
         self._human(f"  [error] {where}: {type(exc).__name__}: {exc}")
 
+    def notice(self, *, tag: str, message: str) -> None:
+        """Informational log: retry attempts, truncation hints, doom-loop warnings.
+
+        Neutral severity — not an error, not a tool call. Used by
+        ``automedal.agent.retry.with_retry`` and the kernel's self-healing
+        paths so the JSONL trail captures what the harness did behind the scenes.
+        """
+        self._end_inline()
+        self._emit("notice", extra={"tag": tag, "message": message})
+        self._human(f"  [{tag}] {message}")
+
+    # Back-compat alias matching ml-intern's `tool_log`; callers can use either.
+    def tool_log(self, *, tool: str, log: str) -> None:
+        self.notice(tag=tool, message=log)
+
     # ── internals ────────────────────────────────────────────────────────────
 
     def _emit(self, kind: str, *, extra: dict[str, Any]) -> None:

@@ -22,6 +22,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+from automedal.agent.errors import format_error
 from automedal.agent.providers.base import ChatProvider, ChatTurn, ToolCall, Usage
 from automedal.agent.tools import Tool, ToolResult
 
@@ -77,7 +78,7 @@ class AgentKernel:
                     messages=messages,
                     steps=step,
                     usage_total=usage_total,
-                    error=f"{type(exc).__name__}: {exc}",
+                    error=format_error(exc),
                 )
 
             usage_total.in_tokens += turn.usage.in_tokens

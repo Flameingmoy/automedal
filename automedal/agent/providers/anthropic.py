@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from automedal.agent.providers.base import ChatProvider, ChatTurn, ToolCall, Usage
+from automedal.agent.retry import with_retry
 
 
 @dataclass
@@ -110,11 +111,18 @@ class AnthropicProvider:
         if tools:
             kwargs["tools"] = self._tool_specs(tools)
 
-        try:
+        async def _one_attempt():
             async with client.messages.stream(**kwargs) as stream:
                 async for ev in stream:
                     self._handle_stream_event(ev, events)
-                final = await stream.get_final_message()
+                return await stream.get_final_message()
+
+        try:
+            final = await with_retry(
+                _one_attempt,
+                label=f"anthropic.chat_stream model={self.model}",
+                events=events,
+            )
         finally:
             try:
                 await client.close()

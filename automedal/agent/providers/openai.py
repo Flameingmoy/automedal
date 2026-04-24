@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from automedal.agent.providers.base import ChatProvider, ChatTurn, ToolCall, Usage
+from automedal.agent.retry import with_retry
 
 
 @dataclass
@@ -147,7 +148,11 @@ class OpenAIProvider:
         stop_reason = ""
 
         try:
-            stream = await client.chat.completions.create(**kwargs)
+            stream = await with_retry(
+                lambda: client.chat.completions.create(**kwargs),
+                label=f"openai.chat_stream model={self.model}",
+                events=events,
+            )
             async for chunk in stream:
                 # Usage may arrive on its own with empty choices
                 if getattr(chunk, "usage", None):

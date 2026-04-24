@@ -133,12 +133,18 @@ async def consult(
     try:
         from openai import AsyncOpenAI
 
+        from automedal.agent.retry import with_retry
+
         client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=120)
         try:
-            resp = await client.chat.completions.create(
-                model=model,
-                max_tokens=int(max_tokens),
-                messages=[{"role": "user", "content": prompt}],
+            resp = await with_retry(
+                lambda: client.chat.completions.create(
+                    model=model,
+                    max_tokens=int(max_tokens),
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+                label=f"advisor.consult {purpose} model={model}",
+                events=events,
             )
         finally:
             try:
