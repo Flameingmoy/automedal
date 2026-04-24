@@ -3,17 +3,15 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-# Install the automedal package plus the tui/harness/scout sub-packages so
-# imports like `from tui.state import ...` work in both dev and installed modes.
-packages = ["automedal", "tui", "harness", "scout"]
+# Install the automedal package plus harness/scout. The user-facing TUI is
+# the Go binary in tui-go/ and is built + distributed separately.
+packages = ["automedal", "harness", "scout"]
 
 [tool.hatch.build.targets.wheel.force-include]
 # Ship prompts/ and templates/ inside the automedal package so user-mode
 # (pipx install) can find them at automedal/prompts/ and automedal/templates/.
 "prompts"   = "automedal/prompts"
 "templates" = "automedal/templates"
-# Ship the splash logo (generated on-demand if missing at runtime).
-"tui/assets/logo/automedal.png" = "tui/assets/logo/automedal.png"
 
 [project]
 name = "automedal"
@@ -60,13 +58,6 @@ dependencies = [
     "pyyaml>=6.0",
     "jinja2>=3.1",
 
-    # TUI (primary UX — `automedal` opens the dashboard)
-    "textual>=0.80",
-    "rich-pixels>=3.0",
-    "textual-plotext>=1.0",
-    "watchdog>=4.0",
-    "pillow>=10",
-
     # Agent runtime — bespoke kernel using official provider SDKs
     "anthropic>=0.40,<0.50",
     "openai>=1.50,<2.0",
@@ -79,10 +70,6 @@ dependencies = [
 # Heavy AutoML - agent can install on demand
 automl = [
     "autogluon.tabular>=1.2",
-]
-# Optional GPU telemetry for the TUI (nvidia-smi fallback still used if omitted)
-tui-gpu = [
-    "pynvml>=11",
 ]
 # Test runner
 test = [

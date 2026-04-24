@@ -399,9 +399,9 @@ Loop:
   automedal models [refresh]     list cached advisor models (--refresh re-fetches)
 
 Monitor:
-  automedal                      open TUI home screen (Go if installed, else Python)
-  automedal tui [--demo]         same as above — --demo forces the Python TUI
-                                 (Go TUI has native ANSI + ~50ms first frame)
+  automedal                      open the Go TUI home screen
+  automedal tui [args...]        same as above — extra args forwarded to the Go binary
+                                 (build: cd tui-go && go build -o automedal-tui .)
 
 Env vars honored by 'automedal run':
   AUTOMEDAL_PROVIDER     opencode-go | anthropic | openai | ollama | openrouter | groq

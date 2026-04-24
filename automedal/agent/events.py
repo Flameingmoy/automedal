@@ -1,9 +1,8 @@
 """Structured JSONL event sink for the bespoke agent runtime.
 
-One line per event in `agent_loop.events.jsonl`. A parallel human-readable
-mirror is appended to `agent_loop.log` (matching the format the existing
-`tui/sources/log_tail.py` regexes look for) so the TUI keeps working
-during the JSONL-parser rewrite.
+One line per event in `agent_loop.events.jsonl` — the Go TUI
+(``tui-go/events/tail.go``) tails this file. A parallel human-readable
+mirror is appended to `agent_loop.log` for post-hoc reading with ``less``.
 
 Event kinds:
     phase_start  — about to invoke a phase (researcher/strategist/...)
