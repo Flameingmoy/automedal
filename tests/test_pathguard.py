@@ -12,6 +12,35 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _restore_tools_modules():
+    """Reloading `tools.base` in-place creates new Tool/ToolResult classes
+    that leak into the rest of the test suite (breaking isinstance checks
+    in callers that imported the originals). After each test in this file
+    we reload once more under the real AUTOMEDAL_CWD so downstream modules
+    see the canonical classes again — and reload every tools submodule
+    that binds ``Tool`` / ``ToolResult`` at import time.
+    """
+    yield
+    import importlib
+    os.environ.pop("AUTOMEDAL_CWD", None)
+    for mod_name in (
+        "automedal.agent.tools.base",
+        "automedal.agent.tools.fs",
+        "automedal.agent.tools.shell",
+        "automedal.agent.tools.cognition",
+        "automedal.agent.tools.arxiv",
+        "automedal.agent.tools.subagent",
+        "automedal.agent.tools.advisor",
+        "automedal.agent.tools.plan",
+        "automedal.agent.tools",
+    ):
+        import sys
+        mod = sys.modules.get(mod_name)
+        if mod is not None:
+            importlib.reload(mod)
+
+
 def _set_repo_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Force REPO_ROOT to a sandbox before importing tools.
 
