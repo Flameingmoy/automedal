@@ -7,7 +7,8 @@ from automedal.agent.events import EventSink
 from automedal.agent.kernel import RunReport
 from automedal.agent.phases._common import run_phase
 from automedal.agent.tools import (
-    EDIT_FILE, GREP, LIST_DIR, READ_FILE, RECALL, WRITE_FILE, make_advisor_tool,
+    EDIT_FILE, GREP, LIST_DIR, READ_FILE, RECALL, WRITE_FILE,
+    make_advisor_tool, make_plan_tool,
 )
 
 
@@ -30,10 +31,14 @@ async def run(
     advisor_note: str = "",
     max_steps: int = 30,
 ) -> RunReport:
+    # Per-phase session dict — scopes plan state to this invocation.
+    session: dict = {}
+
     def _extra_tools(sink):
+        extras = [make_plan_tool(session=session, events=sink)]
         if advisor.is_enabled("tool"):
-            return [make_advisor_tool(events=sink)]
-        return []
+            extras.append(make_advisor_tool(events=sink))
+        return extras
 
     return await run_phase(
         phase="strategist",

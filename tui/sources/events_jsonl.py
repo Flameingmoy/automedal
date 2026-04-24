@@ -123,6 +123,12 @@ def _render(ev: dict) -> Optional[str]:
         where = ev.get("where", "")
         msg = ev.get("msg", "")
         return f"{indent}[error] {where}: {msg}"
+    if kind == "notice":
+        ntag = ev.get("tag", "notice")
+        msg = (ev.get("message") or "").replace("\n", " ")
+        if len(msg) > 200:
+            msg = msg[:197] + "..."
+        return f"{indent}[{ntag}] {msg}"
     return None
 
 

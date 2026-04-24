@@ -22,9 +22,19 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+from automedal.agent.doom_loop import check_for_doom_loop
 from automedal.agent.errors import format_error
+from automedal.agent.messages import patch_dangling_tool_calls
 from automedal.agent.providers.base import ChatProvider, ChatTurn, ToolCall, Usage
 from automedal.agent.tools import Tool, ToolResult
+
+
+_LENGTH_STOP_REASONS = {"length", "max_tokens", "max_output_tokens"}
+
+
+def _is_length_stop(stop_reason: str) -> bool:
+    """Providers vary ('length' for OpenAI, 'max_tokens' for Anthropic)."""
+    return (stop_reason or "").lower() in _LENGTH_STOP_REASONS
 
 
 @dataclass
@@ -62,6 +72,28 @@ class AgentKernel:
             if self.events is not None:
                 self.events.step_advance()
 
+            # Self-healing: patch any unanswered tool_use blocks from a
+            # prior interrupted step so the provider doesn't 400 on us.
+            stubs = patch_dangling_tool_calls(messages)
+            if stubs and self.events is not None:
+                try:
+                    self.events.notice(
+                        tag="self_heal",
+                        message=f"patched {stubs} dangling tool_use block(s)",
+                    )
+                except Exception:
+                    pass
+
+            # Doom-loop guard: detect repetition / cycles in the recent tool
+            # calls and inject a corrective user message. Cheap; runs every step.
+            if (doom := check_for_doom_loop(messages)) is not None:
+                messages.append({"role": "user", "content": doom})
+                if self.events is not None:
+                    try:
+                        self.events.notice(tag="doom_loop", message=doom)
+                    except Exception:
+                        pass
+
             try:
                 turn: ChatTurn = await self.provider.chat_stream(
                     system=self.system_prompt,
@@ -85,6 +117,31 @@ class AgentKernel:
             usage_total.out_tokens += turn.usage.out_tokens
             if self.events is not None and (turn.usage.in_tokens or turn.usage.out_tokens):
                 self.events.usage(in_tokens=turn.usage.in_tokens, out_tokens=turn.usage.out_tokens)
+
+            # Truncation handler: when the model ran out of output budget
+            # mid-tool-call the JSON arguments are garbage. Drop the calls,
+            # keep any text prefix, and inject a hint to retry with smaller
+            # content (heredocs / split edits).
+            if _is_length_stop(turn.stop_reason) and turn.tool_calls:
+                dropped_names = [tc.name for tc in turn.tool_calls]
+                text_blocks = [b for b in turn.assistant_blocks if b.get("type") == "text"]
+                messages.append({"role": "assistant", "content": text_blocks})
+                hint = (
+                    "Your previous response was truncated by the output token limit, so "
+                    f"the following tool calls were dropped: {dropped_names}. Do NOT "
+                    "retry with the same large content. For 'write_file' use bash with "
+                    "cat<<'HEREDOC', or split into multiple smaller edit_file calls."
+                )
+                messages.append({"role": "user", "content": hint})
+                if self.events is not None:
+                    try:
+                        self.events.notice(
+                            tag="truncation",
+                            message=f"stop=length; dropped {dropped_names}",
+                        )
+                    except Exception:
+                        pass
+                continue
 
             # Echo assistant blocks back into the transcript verbatim
             messages.append({"role": "assistant", "content": turn.assistant_blocks})
