@@ -3,7 +3,7 @@ package components
 import (
 	"strings"
 
-	"github.com/cdharmaraj/automedal-tui/theme"
+	"github.com/Flameingmoy/automedal/internal/ui/theme"
 )
 
 // Sparkline renders `points` as a one-line mini-chart using the eight

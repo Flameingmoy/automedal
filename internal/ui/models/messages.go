@@ -4,8 +4,8 @@
 package models
 
 import (
-	"github.com/cdharmaraj/automedal-tui/events"
-	"github.com/cdharmaraj/automedal-tui/proc"
+	"github.com/Flameingmoy/automedal/internal/ui/events"
+	"github.com/Flameingmoy/automedal/internal/ui/proc"
 )
 
 // SwitchScreenMsg tells main.go's router to swap the active model.

@@ -3,8 +3,8 @@ package models
 import (
 	"os"
 
-	"github.com/cdharmaraj/automedal-tui/theme"
-	"github.com/cdharmaraj/automedal-tui/util"
+	"github.com/Flameingmoy/automedal/internal/ui/theme"
+	"github.com/Flameingmoy/automedal/internal/ui/util"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"

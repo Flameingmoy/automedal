@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cdharmaraj/automedal-tui/theme"
+	"github.com/Flameingmoy/automedal/internal/ui/theme"
 	"github.com/charmbracelet/lipgloss"
 )
 

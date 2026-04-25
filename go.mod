@@ -1,4 +1,4 @@
-module github.com/cdharmaraj/automedal-tui
+module github.com/Flameingmoy/automedal
 
 go 1.24.2
 

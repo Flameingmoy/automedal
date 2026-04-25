@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cdharmaraj/automedal-tui/theme"
+	"github.com/Flameingmoy/automedal/internal/ui/theme"
 )
 
 // GpuSample is what `nvidia-smi` gives us in one poll.

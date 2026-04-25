@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cdharmaraj/automedal-tui/theme"
-	"github.com/cdharmaraj/automedal-tui/util"
+	"github.com/Flameingmoy/automedal/internal/ui/theme"
+	"github.com/Flameingmoy/automedal/internal/ui/util"
 )
 
 // Commands mirrors tui/widgets/command_input.py:COMMANDS — keep in sync.

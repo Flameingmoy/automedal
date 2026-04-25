@@ -42,6 +42,13 @@ catboost_info/
 # Pi agent auto-installed by automedal (populated on first run)
 automedal/_vendor/node_modules/
 
+# Go build outputs
+/bin/
+*.test
+
+# Stale Python TUI dir (deleted in commit cc54286 but pyc files may regenerate)
+/tui/
+
 # Claude Code local config
 .claude/
 

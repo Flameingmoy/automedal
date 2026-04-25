@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cdharmaraj/automedal-tui/components"
-	"github.com/cdharmaraj/automedal-tui/proc"
-	"github.com/cdharmaraj/automedal-tui/theme"
+	"github.com/Flameingmoy/automedal/internal/ui/components"
+	"github.com/Flameingmoy/automedal/internal/ui/proc"
+	"github.com/Flameingmoy/automedal/internal/ui/theme"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

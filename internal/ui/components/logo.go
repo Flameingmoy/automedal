@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cdharmaraj/automedal-tui/theme"
-	"github.com/cdharmaraj/automedal-tui/util"
+	"github.com/Flameingmoy/automedal/internal/ui/theme"
+	"github.com/Flameingmoy/automedal/internal/ui/util"
 	"github.com/charmbracelet/lipgloss"
 )
 

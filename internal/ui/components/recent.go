@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cdharmaraj/automedal-tui/theme"
-	"github.com/cdharmaraj/automedal-tui/util"
+	"github.com/Flameingmoy/automedal/internal/ui/theme"
+	"github.com/Flameingmoy/automedal/internal/ui/util"
 )
 
 // RecentEntry is one row in the "recent activity" panel.

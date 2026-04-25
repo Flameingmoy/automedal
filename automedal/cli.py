@@ -60,9 +60,15 @@ def _go_tui_path() -> str | None:
     found = shutil.which("automedal-tui")
     if found:
         return found
-    local = Path.cwd() / "tui-go" / "automedal-tui"
-    if local.is_file() and os.access(str(local), os.X_OK):
-        return str(local)
+    # In-tree development build locations, in priority order. Phase 1 of the
+    # Go-control-plane port moved tui-go/ → internal/ui/ and the Makefile
+    # builds binaries into bin/ — keep the legacy tui-go/ path for users who
+    # haven't pulled the move yet.
+    for rel in ("bin/automedal-tui", "internal/ui/automedal-tui",
+                "tui-go/automedal-tui"):
+        local = Path.cwd() / rel
+        if local.is_file() and os.access(str(local), os.X_OK):
+            return str(local)
     return None
 
 

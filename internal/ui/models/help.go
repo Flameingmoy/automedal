@@ -3,7 +3,7 @@ package models
 import (
 	"strings"
 
-	"github.com/cdharmaraj/automedal-tui/theme"
+	"github.com/Flameingmoy/automedal/internal/ui/theme"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )

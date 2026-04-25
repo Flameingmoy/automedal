@@ -3,8 +3,8 @@ package models
 import (
 	"strings"
 
-	"github.com/cdharmaraj/automedal-tui/components"
-	"github.com/cdharmaraj/automedal-tui/theme"
+	"github.com/Flameingmoy/automedal/internal/ui/components"
+	"github.com/Flameingmoy/automedal/internal/ui/theme"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

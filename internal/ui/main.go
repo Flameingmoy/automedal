@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/cdharmaraj/automedal-tui/models"
+	"github.com/Flameingmoy/automedal/internal/ui/models"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
