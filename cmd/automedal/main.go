@@ -13,6 +13,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"context"
+	"time"
+
+	"github.com/Flameingmoy/automedal/internal/agent"
+	"github.com/Flameingmoy/automedal/internal/agent/providers"
+	"github.com/Flameingmoy/automedal/internal/auth"
+	"github.com/Flameingmoy/automedal/internal/config"
 	"github.com/Flameingmoy/automedal/internal/harness"
 	"github.com/Flameingmoy/automedal/internal/paths"
 )
@@ -37,6 +44,9 @@ func main() {
 	case "harness":
 		runHarness(args[1:])
 		return
+	case "debug":
+		runDebug(args[1:])
+		return
 	}
 	fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", args[0])
 	usage()
@@ -57,6 +67,10 @@ Available commands (Phase 1):
     rank [--m N] [--k N] [--journal-dir D]     top-K by learning value
     trace [--n N] [--journal-dir D]            chronological trace block
     init-memory [--force] [--root D]           create memory files
+  debug <subcommand>     dev-facing smoke tests:
+    chat [--system S] [--no-events] <prompt>   one streaming turn against the
+                                               configured provider; also writes
+                                               JSONL events the TUI can render
 
 Coming in later phases: setup, doctor, init, run, dispatch, tui.
 `)
@@ -188,6 +202,105 @@ func harnessInitMemory(args []string) {
 	for name, state := range res {
 		fmt.Printf("  %7s  %s\n", state, name)
 	}
+}
+
+// ── debug subcommand router ──────────────────────────────────────────────
+
+func runDebug(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: automedal debug <subcommand>")
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "chat":
+		debugChat(args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "unknown debug subcommand: %s\n", args[0])
+		os.Exit(2)
+	}
+}
+
+// debugChat runs one streaming chat turn against the configured provider,
+// printing the model's response to stdout and (unless --no-events) writing
+// JSONL events to AUTOMEDAL_EVENTS_FILE so the Go TUI tail picks it up.
+func debugChat(args []string) {
+	fs := flag.NewFlagSet("chat", flag.ExitOnError)
+	system := fs.String("system", "Reply concisely.", "system prompt")
+	noEvents := fs.Bool("no-events", false, "don't write to the JSONL events file")
+	provider := fs.String("provider", "", "override AUTOMEDAL_PROVIDER")
+	model := fs.String("model", "", "override AUTOMEDAL_MODEL")
+	fs.Parse(args)
+
+	if fs.NArg() == 0 {
+		fmt.Fprintln(os.Stderr, "usage: automedal debug chat [flags] <prompt>")
+		os.Exit(2)
+	}
+	prompt := strings.Join(fs.Args(), " ")
+
+	// Load .env so smoke tests pick up keys without manual export.
+	_, _ = auth.LoadEnv("")
+	cfg := config.Load()
+	if *provider != "" {
+		cfg.Provider = *provider
+	}
+	if *model != "" {
+		cfg.Model = *model
+	}
+
+	prov, err := providers.Build(cfg.Provider, cfg.Model, providers.BuildOpts{
+		Timeout:   30 * time.Second,
+		MaxTokens: 1024,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, agent.FormatError(err))
+		os.Exit(1)
+	}
+
+	var sink *agent.EventSink
+	jsonlPath, humanPath := "", ""
+	if !*noEvents {
+		l, _ := paths.New()
+		jsonlPath = l.EventsFile()
+		humanPath = l.LogFile()
+	}
+	// Echo=true streams deltas to stdout; sink without paths is in-memory.
+	sink, err = agent.New(jsonlPath, humanPath, true)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot open events file:", err)
+		os.Exit(1)
+	}
+	defer sink.Close()
+	sink = sink.WithPhase("debug-chat")
+	sink.PhaseStart(map[string]any{"provider": cfg.Provider, "model": cfg.Model})
+	sink.StepAdvance()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	turn, err := prov.ChatStream(ctx, providers.ChatRequest{
+		System: *system,
+		Messages: []agent.Message{
+			{Role: "user", Content: prompt},
+		},
+		Events: sink,
+	})
+	if err != nil {
+		if sink != nil {
+			sink.Error("debug.ChatStream", err)
+			sink.PhaseEnd("provider_error", nil, nil)
+		}
+		fmt.Fprintln(os.Stderr, agent.FormatError(err))
+		os.Exit(1)
+	}
+
+	if sink != nil {
+		sink.Usage(turn.Usage.InTokens, turn.Usage.OutTokens)
+		sink.PhaseEnd(turn.StopReason, &turn.Usage, nil)
+	}
+
+	// Newline after streamed deltas, then a usage tag.
+	fmt.Println()
+	fmt.Fprintf(os.Stderr, "\n[%s/%s usage=%d/%d stop=%s]\n",
+		cfg.Provider, cfg.Model, turn.Usage.InTokens, turn.Usage.OutTokens, turn.StopReason)
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────

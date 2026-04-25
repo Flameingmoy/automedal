@@ -1,0 +1,12 @@
+# AutoMedal — Program Pointer
+
+This file is retained for backwards compatibility. The active research loop is driven by the **three-phase harness** in `prompts/`.
+
+- **Competition context** (task, metric, hardware, libraries) → read `AGENTS.md`
+- **Per-experiment contract** (what to read, what to write, what to commit) → read `prompts/experimenter.md`
+- **Planning contract** (how knowledge.md and experiment_queue.md are curated) → read `prompts/strategist.md`
+- **External research contract** (arxiv-driven hypotheses) → read `prompts/researcher.md`
+
+`run.sh` dispatches the Experimenter every iteration, and the Strategist / Researcher on empty queue, stagnation (K=3 non-improving runs), or scheduled cadence (every 10 iterations).
+
+The active competition is **{{ .competition.slug }}** ({{ .competition.subtitle }}).
