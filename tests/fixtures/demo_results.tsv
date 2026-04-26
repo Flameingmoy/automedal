@@ -1,4 +1,0 @@
-timestamp	method	trials	val_loss	val_accuracy	submission	notes
-2026-04-10T22:05:00	xgboost	100	0.2067	0.9120	submission_0001.csv	baseline
-2026-04-10T22:10:00	lightgbm	100	0.1801	0.9240	submission_0002.csv	lgbm improvement
-2026-04-10T22:15:00	catboost	100	0.1950	0.9200	submission_0003.csv	worse, reverted

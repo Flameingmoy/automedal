@@ -1,19 +1,20 @@
 // automedal — single CLI entry point.
 //
-// Phase 1 build only wires the deterministic harness commands and a
-// --version stub. The TUI hand-off, agent kernel, run-loop, and
-// dispatch verbs land in subsequent phases per
-// /home/chinmay/.claude/plans/stateful-dancing-peacock.md.
+// Top-level routing:
+//   - "harness" / "debug" — internal dev/test helpers handled in this file.
+//   - everything else — delegated to internal/dispatch.Dispatch (the
+//     port of automedal/dispatch.py).
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
-
-	"context"
+	"syscall"
 	"time"
 
 	"github.com/Flameingmoy/automedal/internal/agent"
@@ -22,70 +23,52 @@ import (
 	"github.com/Flameingmoy/automedal/internal/agent/tools"
 	"github.com/Flameingmoy/automedal/internal/auth"
 	"github.com/Flameingmoy/automedal/internal/config"
+	"github.com/Flameingmoy/automedal/internal/dispatch"
 	"github.com/Flameingmoy/automedal/internal/harness"
 	"github.com/Flameingmoy/automedal/internal/paths"
-	"github.com/Flameingmoy/automedal/internal/scout"
 )
 
-const Version = "2.0.0-go-phase1"
+const Version = "2.0.0-go"
 
 func main() {
+	dispatch.Version = Version
+
 	args := os.Args[1:]
 	if len(args) == 0 {
-		// In Phase 5 this hands off to the Go TUI. For now: print usage.
-		usage()
+		// No verb → Phase 5 will hand off to the TUI. Until then, print
+		// usage so users know what's available.
+		fmt.Fprintln(os.Stderr, "automedal: no command — try `automedal help`")
 		os.Exit(1)
 	}
 
+	// Internal dev verbs route locally; everything else goes to dispatch.
 	switch args[0] {
-	case "--version", "-v", "version":
-		fmt.Printf("automedal %s\n", Version)
-		return
-	case "--help", "-h", "help":
-		usage()
-		return
 	case "harness":
 		runHarness(args[1:])
 		return
 	case "debug":
 		runDebug(args[1:])
 		return
-	case "init":
-		runInit(args[1:])
-		return
 	}
-	fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", args[0])
-	usage()
-	os.Exit(2)
+
+	ctx, cancel := signalContext()
+	defer cancel()
+	os.Exit(dispatch.Dispatch(ctx, args[0], args[1:]))
 }
 
-func usage() {
-	fmt.Fprint(os.Stderr, `automedal — autonomous Kaggle ML research agent (Go control plane)
-
-Usage:
-  automedal <command> [args...]
-
-Available commands (Phase 1):
-  --version              print the binary version
-  harness <subcommand>   deterministic helpers (no LLM):
-    next-exp-id [dir]               next 4-digit experiment id (default: ./journal)
-    stagnation [--k N] [--print-best|--both]   read agent/results.tsv
-    rank [--m N] [--k N] [--journal-dir D]     top-K by learning value
-    trace [--n N] [--journal-dir D]            chronological trace block
-    init-memory [--force] [--root D]           create memory files
-  debug <subcommand>     dev-facing smoke tests:
-    chat [--system S] [--no-events] <prompt>   one streaming turn against the
-                                               configured provider
-    run-phase <name> [--max-steps N]           run one full phase end-to-end via
-                                               the kernel (smoke test)
-  init <slug> [--skip-download] [--abort-on-low-confidence]
-                         download + sniff + render the named Kaggle competition
-
-Coming in later phases: setup, doctor, run, dispatch, tui.
-`)
+// signalContext returns a cancellable context that fires on SIGINT/SIGTERM.
+func signalContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-ch
+		cancel()
+	}()
+	return ctx, cancel
 }
 
-// ── harness subcommand router ────────────────────────────────────────────
+// ── harness subcommand router (dev) ──────────────────────────────────────
 
 func runHarness(args []string) {
 	if len(args) == 0 {
@@ -169,7 +152,6 @@ func harnessRank(args []string) {
 	k := fs.Int("k", 10, "top-K to output")
 	dir := fs.String("journal-dir", "", "path to journal/ (default: ./journal)")
 	fs.Parse(args)
-
 	d := *dir
 	if d == "" {
 		d = defaultJournalDir()
@@ -184,7 +166,6 @@ func harnessTrace(args []string) {
 	n := fs.Int("n", 3, "number of recent journal entries")
 	dir := fs.String("journal-dir", "", "path to journal/ (default: ./journal)")
 	fs.Parse(args)
-
 	d := *dir
 	if d == "" {
 		d = defaultJournalDir()
@@ -199,7 +180,6 @@ func harnessInitMemory(args []string) {
 	force := fs.Bool("force", false, "overwrite existing memory files")
 	root := fs.String("root", "", "project root (default: layout-resolved cwd)")
 	fs.Parse(args)
-
 	r := *root
 	if r == "" {
 		l, err := paths.New()
@@ -231,67 +211,8 @@ func runDebug(args []string) {
 	}
 }
 
-// ── init subcommand (scout bootstrap) ────────────────────────────────────
-
-func runInit(args []string) {
-	fs := flag.NewFlagSet("init", flag.ExitOnError)
-	skipDownload := fs.Bool("skip-download", false, "skip download (data already in data/)")
-	abortLow := fs.Bool("abort-on-low-confidence", false, "abort when sniff confidence < 0.7")
-	fs.Parse(args)
-	if fs.NArg() == 0 {
-		fmt.Fprintln(os.Stderr, "usage: automedal init <slug>")
-		os.Exit(2)
-	}
-	slug := fs.Arg(0)
-
-	creds, err := scout.LoadKaggleCreds()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	client := scout.NewClient(creds)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	fmt.Printf("== AutoMedal — Bootstrap %q ==\n", slug)
-	res, err := scout.Bootstrap(ctx, client, slug, scout.BootstrapOptions{
-		SkipDownload:         *skipDownload,
-		AbortOnLowConfidence: *abortLow,
-	})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "bootstrap:", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("  Task:        %s\n", res.Schema.TaskType)
-	fmt.Printf("  Target:      %s\n", res.Schema.TargetCol)
-	fmt.Printf("  Features:    %d numeric + %d categorical\n",
-		len(res.Schema.NumericFeatures), len(res.Schema.CategoricalFeatures))
-	fmt.Printf("  Train/Test:  %d / %d rows\n", res.Schema.TrainRows, res.Schema.TestRows)
-	fmt.Printf("  Confidence:  %.0f%%\n", res.Schema.Confidence*100)
-	fmt.Printf("  Config:      %s\n", res.ConfigPath)
-	for _, p := range res.Rendered {
-		fmt.Printf("  Rendered:    %s\n", p)
-	}
-	if res.PrepareWritten {
-		fmt.Printf("  Wrote:       %s (starter)\n", res.PreparePath)
-	} else {
-		fmt.Printf("  Kept:        %s (existing)\n", res.PreparePath)
-	}
-	for name, state := range res.Memory {
-		fmt.Printf("  %7s     %s\n", state, name)
-	}
-	if len(res.Schema.Warnings) > 0 {
-		fmt.Println("  Warnings:")
-		for _, w := range res.Schema.Warnings {
-			fmt.Printf("    - %s\n", w)
-		}
-	}
-	fmt.Println("Done.")
-}
-
-// debugRunPhase runs one full phase end-to-end via the kernel — smoke test
-// proving the kernel + provider + tools + prompts wire together.
+// debugRunPhase runs one full phase end-to-end via the kernel — smoke
+// test proving the kernel + provider + tools + prompts wire together.
 func debugRunPhase(args []string) {
 	fs := flag.NewFlagSet("run-phase", flag.ExitOnError)
 	maxSteps := fs.Int("max-steps", 10, "kernel max steps")
@@ -394,10 +315,7 @@ func debugRunPhase(args []string) {
 		report.Stop, report.Steps, report.UsageTotal.InTokens, report.UsageTotal.OutTokens)
 }
 
-
-// debugChat runs one streaming chat turn against the configured provider,
-// printing the model's response to stdout and (unless --no-events) writing
-// JSONL events to AUTOMEDAL_EVENTS_FILE so the Go TUI tail picks it up.
+// debugChat runs one streaming chat turn against the configured provider.
 func debugChat(args []string) {
 	fs := flag.NewFlagSet("chat", flag.ExitOnError)
 	system := fs.String("system", "Reply concisely.", "system prompt")
@@ -412,7 +330,6 @@ func debugChat(args []string) {
 	}
 	prompt := strings.Join(fs.Args(), " ")
 
-	// Load .env so smoke tests pick up keys without manual export.
 	_, _ = auth.LoadEnv("")
 	cfg := config.Load()
 	if *provider != "" {
@@ -431,15 +348,13 @@ func debugChat(args []string) {
 		os.Exit(1)
 	}
 
-	var sink *agent.EventSink
 	jsonlPath, humanPath := "", ""
 	if !*noEvents {
 		l, _ := paths.New()
 		jsonlPath = l.EventsFile()
 		humanPath = l.LogFile()
 	}
-	// Echo=true streams deltas to stdout; sink without paths is in-memory.
-	sink, err = agent.New(jsonlPath, humanPath, true)
+	sink, err := agent.New(jsonlPath, humanPath, true)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cannot open events file:", err)
 		os.Exit(1)
@@ -472,7 +387,6 @@ func debugChat(args []string) {
 		sink.PhaseEnd(turn.StopReason, &turn.Usage, nil)
 	}
 
-	// Newline after streamed deltas, then a usage tag.
 	fmt.Println()
 	fmt.Fprintf(os.Stderr, "\n[%s/%s usage=%d/%d stop=%s]\n",
 		cfg.Provider, cfg.Model, turn.Usage.InTokens, turn.Usage.OutTokens, turn.StopReason)
