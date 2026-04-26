@@ -21,7 +21,9 @@
 
 AutoMedal is an autonomous experiment loop for tabular ML competitions. A small coding agent tries different models, features, hyperparameters, ensembles, and literature-inspired ideas — keeping only what improves the score.
 
-One install, one command, no Node, no framework sprawl. The agent is a ~300-line async kernel that talks to any OpenAI- or Anthropic-shape provider (opencode-go, Anthropic, OpenAI, OpenRouter, Groq, Ollama, …). All state lives in git-tracked markdown files — the agent itself is stateless.
+**One static Go binary.** The control plane (run-loop, agent kernel, providers, advisor, harness, scout, TUI) is a single ~30 MB binary. Python only runs in two places: (1) a tiny `sniff` shim used once per `automedal init` for pandas-backed CSV schema inference, and (2) the agent's own ML pipeline at `agent/{train,prepare}.py`. No Python in the iteration hot path.
+
+Talks to any OpenAI- or Anthropic-shape provider (opencode-go, Anthropic, OpenAI, OpenRouter, Groq, Ollama, …). All state lives in git-tracked markdown files — the agent itself is stateless.
 
 Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) (same edit → train → check → keep/revert philosophy), extended for Kaggle-style tabular ML.
 
@@ -33,35 +35,28 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) 
 curl -LsSf https://raw.githubusercontent.com/Flameingmoy/automedal/main/install.sh | bash
 ```
 
-The installer verifies Python ≥ 3.11, installs `pipx` if needed, installs AutoMedal into an isolated `pipx` venv, and creates `~/.automedal/` (mode 0700) for credentials and logs. The Go TUI binary is built separately from `tui-go/` — see [TUI — Command Centre](#tui--command-centre).
+The installer verifies Go ≥ 1.24, builds the `automedal` binary into `~/.local/bin`, installs the optional `sniff` Python shim (via `pipx`, falling back to `pip --user`), and creates `~/.automedal/` (mode 0700) for credentials and logs.
 
-Upgrade later with the same command, or:
-
-```bash
-pipx upgrade automedal
-```
-
-### Direct pipx (equivalent)
+Upgrade later:
 
 ```bash
-pipx install git+https://github.com/Flameingmoy/automedal       # install
-pipx upgrade automedal                                          # upgrade
-pipx uninstall automedal                                        # remove
+GOBIN=~/.local/bin go install github.com/Flameingmoy/automedal/cmd/automedal@latest
+pipx upgrade automedal-sniff
 ```
 
 ### From source (development)
 
 ```bash
 git clone https://github.com/Flameingmoy/automedal automedal && cd automedal
-pip install -e .                 # or: uv sync
-automedal --version
+go build -o ~/.local/bin/automedal ./cmd/automedal
+pipx install ./py-shim/sniff       # or: pip install --user ./py-shim/sniff
+automedal version
 ```
-
-Editable install exposes the `automedal` command globally and lets you iterate on the package without reinstalling.
 
 ### Requirements
 
-- **Python** 3.11, 3.12, or 3.13
+- **Go** ≥ 1.24 (build-time only; the binary is statically linked).
+- **Python** ≥ 3.10 with pandas + numpy (only used by `automedal init` for CSV schema inference). Skip if you only need `automedal run` against an already-bootstrapped competition.
 - **NVIDIA GPU** with CUDA (tested on an RTX 4070 Ti Super, 16 GB). CPU-only works but tabular GBMs will be slow.
 - **API key** for any [supported provider](#providers) — OpenCode Go recommended (one key unlocks GLM / Kimi / MiMo / MiniMax).
 - **Kaggle credentials** at `~/.kaggle/kaggle.json` ([get one here](https://www.kaggle.com/settings)).
