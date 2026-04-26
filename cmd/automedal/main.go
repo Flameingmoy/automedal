@@ -17,11 +17,14 @@ import (
 	"time"
 
 	"github.com/Flameingmoy/automedal/internal/agent"
+	"github.com/Flameingmoy/automedal/internal/agent/phases"
 	"github.com/Flameingmoy/automedal/internal/agent/providers"
+	"github.com/Flameingmoy/automedal/internal/agent/tools"
 	"github.com/Flameingmoy/automedal/internal/auth"
 	"github.com/Flameingmoy/automedal/internal/config"
 	"github.com/Flameingmoy/automedal/internal/harness"
 	"github.com/Flameingmoy/automedal/internal/paths"
+	"github.com/Flameingmoy/automedal/internal/scout"
 )
 
 const Version = "2.0.0-go-phase1"
@@ -47,6 +50,9 @@ func main() {
 	case "debug":
 		runDebug(args[1:])
 		return
+	case "init":
+		runInit(args[1:])
+		return
 	}
 	fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", args[0])
 	usage()
@@ -69,10 +75,13 @@ Available commands (Phase 1):
     init-memory [--force] [--root D]           create memory files
   debug <subcommand>     dev-facing smoke tests:
     chat [--system S] [--no-events] <prompt>   one streaming turn against the
-                                               configured provider; also writes
-                                               JSONL events the TUI can render
+                                               configured provider
+    run-phase <name> [--max-steps N]           run one full phase end-to-end via
+                                               the kernel (smoke test)
+  init <slug> [--skip-download] [--abort-on-low-confidence]
+                         download + sniff + render the named Kaggle competition
 
-Coming in later phases: setup, doctor, init, run, dispatch, tui.
+Coming in later phases: setup, doctor, run, dispatch, tui.
 `)
 }
 
@@ -214,11 +223,177 @@ func runDebug(args []string) {
 	switch args[0] {
 	case "chat":
 		debugChat(args[1:])
+	case "run-phase":
+		debugRunPhase(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown debug subcommand: %s\n", args[0])
 		os.Exit(2)
 	}
 }
+
+// ── init subcommand (scout bootstrap) ────────────────────────────────────
+
+func runInit(args []string) {
+	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	skipDownload := fs.Bool("skip-download", false, "skip download (data already in data/)")
+	abortLow := fs.Bool("abort-on-low-confidence", false, "abort when sniff confidence < 0.7")
+	fs.Parse(args)
+	if fs.NArg() == 0 {
+		fmt.Fprintln(os.Stderr, "usage: automedal init <slug>")
+		os.Exit(2)
+	}
+	slug := fs.Arg(0)
+
+	creds, err := scout.LoadKaggleCreds()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	client := scout.NewClient(creds)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	fmt.Printf("== AutoMedal — Bootstrap %q ==\n", slug)
+	res, err := scout.Bootstrap(ctx, client, slug, scout.BootstrapOptions{
+		SkipDownload:         *skipDownload,
+		AbortOnLowConfidence: *abortLow,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "bootstrap:", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("  Task:        %s\n", res.Schema.TaskType)
+	fmt.Printf("  Target:      %s\n", res.Schema.TargetCol)
+	fmt.Printf("  Features:    %d numeric + %d categorical\n",
+		len(res.Schema.NumericFeatures), len(res.Schema.CategoricalFeatures))
+	fmt.Printf("  Train/Test:  %d / %d rows\n", res.Schema.TrainRows, res.Schema.TestRows)
+	fmt.Printf("  Confidence:  %.0f%%\n", res.Schema.Confidence*100)
+	fmt.Printf("  Config:      %s\n", res.ConfigPath)
+	for _, p := range res.Rendered {
+		fmt.Printf("  Rendered:    %s\n", p)
+	}
+	if res.PrepareWritten {
+		fmt.Printf("  Wrote:       %s (starter)\n", res.PreparePath)
+	} else {
+		fmt.Printf("  Kept:        %s (existing)\n", res.PreparePath)
+	}
+	for name, state := range res.Memory {
+		fmt.Printf("  %7s     %s\n", state, name)
+	}
+	if len(res.Schema.Warnings) > 0 {
+		fmt.Println("  Warnings:")
+		for _, w := range res.Schema.Warnings {
+			fmt.Printf("    - %s\n", w)
+		}
+	}
+	fmt.Println("Done.")
+}
+
+// debugRunPhase runs one full phase end-to-end via the kernel — smoke test
+// proving the kernel + provider + tools + prompts wire together.
+func debugRunPhase(args []string) {
+	fs := flag.NewFlagSet("run-phase", flag.ExitOnError)
+	maxSteps := fs.Int("max-steps", 10, "kernel max steps")
+	fs.Parse(args)
+	if fs.NArg() == 0 {
+		fmt.Fprintln(os.Stderr, "usage: automedal debug run-phase <researcher|strategist|experimenter|experimenter_eval|analyzer>")
+		os.Exit(2)
+	}
+	name := fs.Arg(0)
+
+	_, _ = auth.LoadEnv("")
+	cfg := config.Load()
+	prov, err := providers.Build(cfg.Provider, cfg.Model, providers.BuildOpts{
+		Timeout: 120 * time.Second, MaxTokens: 4096,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, agent.FormatError(err))
+		os.Exit(1)
+	}
+
+	l, _ := paths.New()
+	sink, err := agent.New(l.EventsFile(), l.LogFile(), true)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "events:", err)
+		os.Exit(1)
+	}
+	defer sink.Close()
+
+	chat := agent.ChatStreamFunc(func(ctx context.Context, system string,
+		msgs []agent.Message, ts []tools.Tool, ev *agent.EventSink) (*agent.ChatTurn, error) {
+		specs := make([]providers.ToolSpec, 0, len(ts))
+		for _, t := range ts {
+			specs = append(specs, providers.ToolSpec{
+				Name: t.Name, Description: t.Description, Schema: t.Schema,
+			})
+		}
+		turn, err := prov.ChatStream(ctx, providers.ChatRequest{
+			System: system, Messages: msgs, Tools: specs, Events: ev,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out := &agent.ChatTurn{
+			AssistantBlocks: turn.AssistantBlocks,
+			AssistantText:   turn.AssistantText,
+			Usage:           turn.Usage,
+			StopReason:      turn.StopReason,
+		}
+		for _, c := range turn.ToolCalls {
+			out.ToolCalls = append(out.ToolCalls, agent.ToolCall{
+				ID: c.ID, Name: c.Name, Args: c.Args,
+			})
+		}
+		return out, nil
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	expID, _ := harness.NextExpID(defaultJournalDir())
+	bestStr := "inf"
+	if losses, _ := harness.ReadValLosses(defaultResultsTSV()); len(losses) > 0 {
+		bestStr = fmt.Sprintf("%.6f", harness.BestValLoss(losses))
+	}
+
+	var report agent.RunReport
+	switch name {
+	case "researcher":
+		report, err = phases.RunResearcher(ctx, chat, sink, phases.ResearcherArgs{
+			ExpID: expID, Trigger: "manual", Stagnating: false, ScheduledResearch: 1,
+			BestValLoss: bestStr, MaxSteps: *maxSteps,
+		})
+	case "strategist":
+		report, err = phases.RunStrategist(ctx, chat, sink, phases.StrategistArgs{
+			ExpID: expID, Iteration: 1, MaxIters: 1, Stagnating: false, BestValLoss: bestStr,
+			Pending: 0, Reflective: "", Ranked: "", MaxSteps: *maxSteps,
+		})
+	case "experimenter":
+		report, err = phases.RunExperimenterEdit(ctx, chat, sink, phases.ExperimenterEditArgs{
+			ExpID: expID, BestValLoss: bestStr, MaxSteps: *maxSteps,
+		})
+	case "experimenter_eval":
+		report, err = phases.RunExperimenterEval(ctx, chat, sink, phases.ExperimenterEvalArgs{
+			ExpID: expID, BestValLoss: bestStr, TrainRC: 0, FinalLoss: bestStr, MaxSteps: *maxSteps,
+		})
+	case "analyzer":
+		report, err = phases.RunAnalyzer(ctx, chat, sink, phases.AnalyzerArgs{
+			ExpID: expID, Slug: "manual", Status: "improved", FinalLoss: bestStr,
+			BestValLoss: bestStr, ValLossDelta: 0, MaxSteps: *maxSteps,
+		})
+	default:
+		fmt.Fprintf(os.Stderr, "unknown phase: %s\n", name)
+		os.Exit(2)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, agent.FormatError(err))
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "\n[stop=%s steps=%d usage=%d/%d]\n",
+		report.Stop, report.Steps, report.UsageTotal.InTokens, report.UsageTotal.OutTokens)
+}
+
 
 // debugChat runs one streaming chat turn against the configured provider,
 // printing the model's response to stdout and (unless --no-events) writing
