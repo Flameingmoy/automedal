@@ -3,12 +3,13 @@ package models
 import (
 	"strings"
 
+	"github.com/Flameingmoy/automedal/internal/ui/components"
 	"github.com/Flameingmoy/automedal/internal/ui/theme"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// HelpModel — full-screen keybindings + commands reference. Any keypress
+// HelpModel — keybindings reference grouped by screen.  Any keypress
 // returns to Home.
 type HelpModel struct {
 	width, height int
@@ -34,28 +35,82 @@ func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m HelpModel) View() string {
-	title := theme.Accent.Render("help — AutoMedal TUI")
-	rows := []struct{ k, v string }{
-		{"run N [--advisor MODEL]", "run N iterations of the kernel"},
-		{"dashboard / dash / watch", "open the live dashboard"},
-		{"knowledge / k", "view knowledge.md in a pager"},
-		{"init / discover / select", "scout + competition setup"},
-		{"doctor", "environment health check"},
-		{"status", "one-line status"},
-		{"clean / prepare / render", "pipeline helpers"},
-		{"models [refresh]", "advisor model cache"},
-		{"setup", "interactive provider setup"},
-		{"help", "this screen"},
-		{"quit / q / :q", "exit the TUI"},
+	type section struct {
+		title string
+		keys  [][2]string
 	}
-	var b strings.Builder
-	b.WriteString(title + "\n\n")
-	for _, r := range rows {
-		b.WriteString("  " + theme.Accent.Render(padR(r.k, 26)) + " " + theme.Muted.Render(r.v) + "\n")
+	sections := []section{
+		{title: "Home", keys: [][2]string{
+			{"tab", "autocomplete"},
+			{"enter", "execute"},
+			{"esc", "clear"},
+			{"d", "dashboard"},
+			{"t", "timeline"},
+			{"c", "config"},
+			{"k", "knowledge"},
+			{"ctrl+c", "quit"},
+		}},
+		{title: "Dashboard", keys: [][2]string{
+			{"k", "knowledge"},
+			{"t", "timeline"},
+			{"c", "config"},
+			{"q / esc", "home"},
+			{"↑↓ / PgUp/Dn", "scroll log"},
+		}},
+		{title: "Run", keys: [][2]string{
+			{"q / esc", "interrupt & home"},
+			{"↑↓", "scroll output"},
+		}},
+		{title: "Global", keys: [][2]string{
+			{"ctrl+c", "quit"},
+			{"?", "help"},
+		}},
 	}
-	b.WriteString("\n" + theme.Muted.Render("keys:  tab=complete  ·  enter=run  ·  esc/any=back  ·  ctrl+c=quit"))
-	box := theme.Panel.Copy().Width(m.width - 4).Render(b.String())
-	return lipgloss.NewStyle().Padding(1).Render(box)
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(theme.ColorJade)).
+		Bold(true)
+	keyStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(theme.ColorTextDim)).
+		Bold(true)
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.ColorMuted))
+
+	var blocks []string
+	for _, s := range sections {
+		var b strings.Builder
+		b.WriteString(titleStyle.Render(s.title) + "\n")
+		for _, k := range s.keys {
+			b.WriteString("  " +
+				keyStyle.Render(padR(k[0], 16)) +
+				descStyle.Render(k[1]) + "\n")
+		}
+		boxW := (m.width - 8) / 2
+		if boxW < 24 {
+			boxW = 24
+		}
+		blocks = append(blocks, theme.Panel.Copy().Width(boxW).Render(b.String()))
+	}
+
+	header := lipgloss.NewStyle().
+		Background(lipgloss.Color(theme.ColorSurf)).
+		Foreground(lipgloss.Color(theme.ColorJade)).
+		Bold(true).
+		Padding(0, 2).
+		Width(m.width).
+		Render("KEYBINDINGS")
+
+	row1 := lipgloss.JoinHorizontal(lipgloss.Top, blocks[0], " ", blocks[1])
+	row2 := lipgloss.JoinHorizontal(lipgloss.Top, blocks[2], " ", blocks[3])
+
+	footer := components.FooterHints([]components.HintPair{
+		{Key: "any key", Desc: "home"},
+		{Key: "ctrl+c", Desc: "quit"},
+	}, m.width)
+
+	body := lipgloss.NewStyle().Padding(1, 2).Render(
+		lipgloss.JoinVertical(lipgloss.Left, row1, "", row2),
+	)
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
 
 func padR(s string, w int) string {

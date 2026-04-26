@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Flameingmoy/automedal/internal/ui/components"
 	"github.com/Flameingmoy/automedal/internal/ui/proc"
@@ -12,8 +13,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// RunModel streams `automedal <verb> <args>` into a viewport. Pressing
-// `q` or `Esc` cancels the child and returns to Home.
+// RunModel — v2 layout: full-width streaming log on the left, narrow
+// side metrics panel on the right (phase / iter / best / gpu / tokens).
+// Pressing q / Esc cancels the child and returns to Home.
 type RunModel struct {
 	verb   string
 	args   []string
@@ -25,41 +27,47 @@ type RunModel struct {
 	lines  []string
 	done   bool
 	exit   *proc.ExitMsg
+
+	gpu  components.GpuSample
+	spin int
 }
 
-// NewRun spawns the subprocess immediately (via Init). On spawn failure
-// the first line of output is the error.
+const sidePanelWidth = 30
+
+// NewRun spawns the subprocess immediately (via Init).
 func NewRun(verb string, args []string) RunModel {
 	vp := viewport.New(80, 20)
 	return RunModel{verb: verb, args: args, vp: vp}
 }
 
-// spawnCmd kicks off the subprocess and returns a tea.Cmd that resolves
-// to the first line (or exit) message.
 type spawnedMsg struct {
 	h   *proc.Handle
 	err error
 }
 
 func (m RunModel) Init() tea.Cmd {
-	return func() tea.Msg {
-		// proc.Spawn derives its own cancellable context internally — we
-		// just pass context.Background() here. Handle.Cancel() is how we
-		// tear down from Update on "q"/"ctrl+c".
-		h, err := proc.Spawn(context.Background(), m.verb, m.args)
-		if err != nil {
-			return spawnedMsg{err: err}
-		}
-		return spawnedMsg{h: h}
-	}
+	return tea.Batch(
+		func() tea.Msg {
+			h, err := proc.Spawn(context.Background(), m.verb, m.args)
+			if err != nil {
+				return spawnedMsg{err: err}
+			}
+			return spawnedMsg{h: h}
+		},
+		tickGPU(),
+		tickSpin(),
+	)
 }
 
 func (m RunModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.vp.Width = msg.Width - 4
-		m.vp.Height = msg.Height - 5
+		m.vp.Width = m.logColumn() - 4
+		m.vp.Height = m.height - 5
+		if m.vp.Height < 6 {
+			m.vp.Height = 6
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -68,9 +76,7 @@ func (m RunModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.handle != nil {
 				m.handle.Cancel()
 			}
-			return m, func() tea.Msg {
-				return SwitchScreenMsg{To: ScreenHome}
-			}
+			return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenHome} }
 		}
 		var cmd tea.Cmd
 		m.vp, cmd = m.vp.Update(msg)
@@ -83,28 +89,37 @@ func (m RunModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.handle = msg.h
-		// Start listening for lines.
 		return m, readLine(m.handle)
 
 	case RunLineMsg:
-		text := msg.Line.Text
-		if msg.Line.IsErr {
-			text = theme.WarnStyle.Render(text)
-		}
-		m.appendLine(text)
+		m.appendLine(colorizeLine(msg.Line.Text, msg.Line.IsErr))
 		return m, readLine(m.handle)
 
 	case RunExitMsg:
 		m.done = true
 		m.exit = &msg.Exit
-		tag := theme.OKStyle.Render("── done ──")
+		tag := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(theme.ColorOK)).
+			Bold(true).
+			Render("── done ──")
 		if msg.Exit.ExitCode != 0 {
 			tag = theme.ErrorStyle.Render(
 				fmt.Sprintf("── exit %d ──", msg.Exit.ExitCode),
 			)
 		}
-		m.appendLine(tag + "  " + theme.Muted.Render("(press q to return)"))
+		mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.ColorMuted))
+		m.appendLine(tag + "  " + mutedStyle.Render("(press q to return)"))
 		return m, nil
+
+	case TickMsg:
+		switch msg.Kind {
+		case "gpu":
+			m.gpu = components.Poll()
+			return m, tickGPU()
+		case "spin":
+			m.spin++
+			return m, tickSpin()
+		}
 	}
 
 	var cmd tea.Cmd
@@ -121,29 +136,147 @@ func (m *RunModel) appendLine(s string) {
 	m.vp.GotoBottom()
 }
 
+func (m RunModel) logColumn() int {
+	if m.width <= sidePanelWidth+10 {
+		return m.width
+	}
+	return m.width - sidePanelWidth
+}
+
 func (m RunModel) View() string {
 	if m.width == 0 {
 		return "spawning…"
 	}
-	title := theme.Accent.Render(
-		fmt.Sprintf("automedal %s %s", m.verb, joinArgs(m.args)),
-	) + "  " + theme.Muted.Render("(q to return)")
 
-	body := theme.Panel.Copy().
-		Width(m.width - 2).
-		Height(m.height - 3).
+	// Header strip — phase-coloured, with spinner.
+	phaseStr := strings.ToUpper(orStr(m.guessPhase(), "experimenter"))
+	header := lipgloss.NewStyle().
+		Background(lipgloss.Color(theme.ColorSurf)).
+		Foreground(lipgloss.Color(theme.ColorTextDim)).
+		Padding(0, 2).
+		Width(m.width).
+		Render(
+			components.SpinnerFrame(m.spin) + " " +
+				lipgloss.NewStyle().
+					Foreground(theme.PhaseColor(phaseStr)).
+					Bold(true).
+					Render(fmt.Sprintf("automedal %s %s",
+						m.verb, joinArgs(m.args))) +
+				"   " +
+				lipgloss.NewStyle().
+					Foreground(lipgloss.Color(theme.ColorMuted)).
+					Render("q to interrupt  ·  ↑↓ scroll"),
+		)
+
+	logBox := theme.Panel.Copy().
+		Width(m.logColumn() - 2).
+		Height(m.height - 4).
 		Render(m.vp.View())
-	return lipgloss.JoinVertical(lipgloss.Left, title, body)
+
+	side := m.renderSide(sidePanelWidth - 2)
+
+	body := lipgloss.JoinHorizontal(lipgloss.Top, logBox, side)
+	return lipgloss.JoinVertical(lipgloss.Left, header, body)
+}
+
+func (m RunModel) renderSide(w int) string {
+	if m.width <= sidePanelWidth+10 {
+		return ""
+	}
+	muted := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(theme.ColorMuted)).
+		Bold(true)
+	val := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.ColorText)).Bold(true)
+
+	gpuPct := 0
+	gpuColor := theme.ColorTextDim
+	if m.gpu.OK {
+		gpuPct = m.gpu.Util
+		if gpuPct > 85 {
+			gpuColor = theme.ColorOK
+		} else {
+			gpuColor = theme.ColorWarn
+		}
+	}
+
+	rows := []string{
+		muted.Render("PHASE"),
+		lipgloss.NewStyle().
+			Foreground(theme.PhaseColor(m.guessPhase())).
+			Bold(true).
+			Render(components.SpinnerFrame(m.spin) + " " + strings.ToUpper(m.guessPhase())),
+		"",
+		muted.Render("EXPERIMENTS"),
+		val.Render(fmt.Sprintf("%d", len(components.ReadLeaderboard()))),
+		"",
+		muted.Render("GPU"),
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color(gpuColor)).
+			Bold(true).
+			Render(fmt.Sprintf("%d%%", gpuPct)),
+		components.MiniBar(float64(gpuPct)/100, w-2, theme.ColorJade),
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color(theme.ColorMuted)).
+			Render(fmt.Sprintf("%d / %d MiB", m.gpu.MemUsed, m.gpu.MemTotal)),
+		"",
+		muted.Render("LINES"),
+		val.Render(fmt.Sprintf("%d", len(m.lines))),
+	}
+
+	body := strings.Join(rows, "\n")
+	return lipgloss.NewStyle().
+		Width(w).
+		Background(lipgloss.Color(theme.ColorSurf)).
+		Padding(1, 2).
+		Render(body)
+}
+
+// guessPhase scans the most recent log lines for a phase header so the
+// side panel and header colour stay in sync.
+func (m RunModel) guessPhase() string {
+	for i := len(m.lines) - 1; i >= 0 && i >= len(m.lines)-30; i-- {
+		l := m.lines[i]
+		switch {
+		case strings.Contains(l, "RESEARCHER"):
+			return "researcher"
+		case strings.Contains(l, "STRATEGIST"):
+			return "strategist"
+		case strings.Contains(l, "EXPERIMENTER"):
+			return "experimenter"
+		case strings.Contains(l, "ANALYZER"):
+			return "analyzer"
+		case strings.Contains(l, "ADVISOR"):
+			return "advisor"
+		}
+	}
+	return "experimenter"
+}
+
+// colorizeLine applies a phase tint when the line is a phase header,
+// or a warn tint for stderr.  Pure cosmetic — does not parse meaning.
+func colorizeLine(text string, isErr bool) string {
+	if isErr {
+		return theme.WarnStyle.Render(text)
+	}
+	upper := strings.ToUpper(text)
+	for _, p := range []string{"RESEARCHER", "STRATEGIST", "EXPERIMENTER",
+		"ANALYZER", "ADVISOR", "TRAINING"} {
+		if strings.Contains(upper, p) {
+			return lipgloss.NewStyle().
+				Foreground(theme.PhaseColor(strings.ToLower(p))).
+				Bold(true).
+				Render(text)
+		}
+	}
+	return text
 }
 
 // readLine returns a tea.Cmd that reads one message off the handle.
-// After the line is consumed the Update re-arms itself.
 func readLine(h *proc.Handle) tea.Cmd {
 	return func() tea.Msg {
 		select {
 		case l, ok := <-h.Lines():
 			if !ok {
-				// lines channel closed → exit coming imminently
 				return RunExitMsg{Exit: <-h.Exit()}
 			}
 			return RunLineMsg{Line: l}
@@ -153,7 +286,6 @@ func readLine(h *proc.Handle) tea.Cmd {
 	}
 }
 
-// (tiny helpers — avoid importing strings just for Join in this tight loop)
 func stringsJoin(xs []string, sep string) string {
 	if len(xs) == 0 {
 		return ""
@@ -173,6 +305,3 @@ func stringsJoin(xs []string, sep string) string {
 }
 
 func joinArgs(args []string) string { return stringsJoin(args, " ") }
-
-// Ensure viewport's placeholder isn't empty-unused.
-var _ = components.ShortBanner

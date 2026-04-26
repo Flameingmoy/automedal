@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/Flameingmoy/automedal/internal/ui/components"
@@ -10,14 +11,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// HomeModel is the landing screen — logo, status strip, recent activity,
-// command palette.  Mirrors tui/screens/home.py visually.
+// HomeModel — landing screen.  Hermes-style gradient banner left, live
+// info table right, command palette below.  Mirrors AutoMedal TUI v2.
 type HomeModel struct {
 	input  textinput.Model
 	width  int
 	height int
 
-	brand       string
 	competition string
 	status      components.StatusData
 }
@@ -25,14 +25,13 @@ type HomeModel struct {
 // NewHome returns a fresh HomeModel ready to Init().
 func NewHome() HomeModel {
 	ti := textinput.New()
-	ti.Placeholder = "type a command (e.g. run 30)"
-	ti.Prompt = "" // we draw our own ">" prompt outside the input
+	ti.Placeholder = "type a command  ·  tab to autocomplete"
+	ti.Prompt = ""
 	ti.CharLimit = 512
 	ti.Focus()
 
 	return HomeModel{
 		input: ti,
-		brand: "AutoMedal",
 		status: components.StatusData{
 			Brand: "AutoMedal",
 		},
@@ -55,8 +54,6 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case tea.KeyTab:
-			// Autocomplete on Tab — fix lands behavior we just shipped in
-			// command_input.py: single match appends trailing space.
 			completed, ok := components.Autocomplete(m.input.Value())
 			if ok {
 				m.input.SetValue(completed)
@@ -78,15 +75,12 @@ func (m HomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// dispatch decides what to do with the typed text. Quit aliases MUST NOT
-// spawn a subprocess (the old Python bug — see tui/screens/home.py:102
-// and docs/plans/go-tui-migration.md).
+// dispatch maps typed text to a screen swap or subprocess spawn.
 func (m HomeModel) dispatch(raw string) (tea.Model, tea.Cmd) {
 	text := components.Normalize(raw)
 	if text == "" {
 		return m, nil
 	}
-
 	if components.IsQuit(text) {
 		return m, tea.Quit
 	}
@@ -95,34 +89,28 @@ func (m HomeModel) dispatch(raw string) (tea.Model, tea.Cmd) {
 	cmd := strings.ToLower(parts[0])
 	args := parts[1:]
 
-	// Clear the input immediately for UX.
 	m.input.SetValue("")
 
 	switch cmd {
 	case "help":
-		return m, func() tea.Msg {
-			return SwitchScreenMsg{To: ScreenHelp}
-		}
+		return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenHelp} }
 	case "dashboard", "dash", "watch":
-		return m, func() tea.Msg {
-			return SwitchScreenMsg{To: ScreenDash}
-		}
+		return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenDash} }
 	case "knowledge", "k":
-		return m, func() tea.Msg {
-			return SwitchScreenMsg{To: ScreenKnowledge}
-		}
+		return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenKnowledge} }
+	case "timeline", "tl":
+		return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenTimeline} }
+	case "config", "cfg":
+		return m, func() tea.Msg { return SwitchScreenMsg{To: ScreenConfig} }
 	default:
-		// Everything else shells out to `automedal <cmd> <args>` via a
-		// Run screen.  The old Python TUI did the same, but we do it
-		// without the 1.4-second Python import tax every time.
 		return m, func() tea.Msg {
 			return SwitchScreenMsg{To: ScreenRun, Verb: cmd, Args: args}
 		}
 	}
 }
 
-// UpdateStatus lets main.go push an external StatusData in (advisor
-// state, phase from the JSONL tailer, etc.).
+// UpdateStatus lets main.go push live data in (advisor state, phase
+// from JSONL, etc.).
 func (m *HomeModel) UpdateStatus(s components.StatusData) {
 	m.status = s
 }
@@ -131,27 +119,161 @@ func (m HomeModel) View() string {
 	if m.width <= 0 {
 		return "\n  loading…\n"
 	}
-	logoW := m.width - 2
-	logo := components.Logo(logoW)
 
-	statusLine := components.StatusBar(m.status, m.width-2)
+	// Banner — chunky pixel font, blue→cyan→jade gradient.
+	banner := components.Banner("AUTOMEDAL")
+	bannerW := components.BannerWidth("AUTOMEDAL")
 
-	recent := components.RecentPanel(5, m.width)
+	tagline := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(theme.ColorTextDim)).
+		Italic(true).
+		Render("autonomous ML research loop  ·  jade always")
 
-	prompt := theme.Prompt.Render("> ") + m.input.View()
+	infoRows := m.buildInfo()
+	info := components.InfoTable(infoRows, 14)
+
+	// Decide layout: side-by-side if there's room, else stack.
+	innerW := m.width - 4
+	infoW := lipgloss.Width(info)
+	bannerBlock := lipgloss.JoinVertical(lipgloss.Left, banner, "", tagline)
+
+	var hero string
+	if innerW >= bannerW+infoW+6 {
+		gap := strings.Repeat(" ", 6)
+		infoBlock := lipgloss.JoinVertical(lipgloss.Left,
+			components.Separator(infoW, theme.ColorJade),
+			info,
+			"",
+			components.Separator(infoW, theme.ColorMuted),
+			components.PhaseSwatches(),
+		)
+		hero = lipgloss.JoinHorizontal(lipgloss.Top, bannerBlock, gap, infoBlock)
+	} else {
+		hero = lipgloss.JoinVertical(lipgloss.Left,
+			bannerBlock,
+			"",
+			components.Separator(min(innerW, 60), theme.ColorJade),
+			info,
+			"",
+			components.PhaseSwatches(),
+		)
+	}
+
+	// Command palette.
+	prompt := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(theme.ColorJade)).
+		Bold(true).
+		Render("▸ ")
 	hints := components.HintLine(m.input.Value())
-	promptBox := theme.Panel.Copy().
+	paletteBody := prompt + m.input.View() + "\n" + hints
+	palette := theme.PanelHi.Copy().
 		Width(m.width - 2).
-		Render(prompt + "\n" + hints)
+		Render(paletteBody)
 
-	footer := theme.Muted.Render("  tab: complete  ·  enter: run  ·  esc: clear  ·  ctrl+c: quit")
+	footer := components.FooterHints([]components.HintPair{
+		{Key: "tab", Desc: "complete"},
+		{Key: "enter", Desc: "run"},
+		{Key: "d", Desc: "dashboard"},
+		{Key: "t", Desc: "timeline"},
+		{Key: "c", Desc: "config"},
+		{Key: "k", Desc: "knowledge"},
+		{Key: "ctrl+c", Desc: "quit"},
+	}, m.width)
 
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		logo,
-		statusLine,
-		recent,
-		promptBox,
+	heroBox := lipgloss.NewStyle().Padding(1, 2).Render(hero)
+
+	available := m.height - lipgloss.Height(heroBox) - lipgloss.Height(palette) - lipgloss.Height(footer)
+	pad := ""
+	if available > 0 {
+		pad = strings.Repeat("\n", available)
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		heroBox,
+		pad,
+		palette,
 		footer,
 	)
-	return content
+}
+
+func (m HomeModel) buildInfo() []components.InfoRow {
+	s := m.status
+
+	phaseVal := "⣾ " + strings.ToUpper(orStr(s.Phase, "idle"))
+	phaseColor := theme.ColorTextDim
+	if s.Phase != "" && strings.ToUpper(s.Phase) != "IDLE" {
+		phaseColor = colorHex(theme.PhaseColor(s.Phase))
+	}
+
+	iter := "—"
+	if s.Iteration > 0 {
+		if s.TotalIters > 0 {
+			iter = fmt.Sprintf("%d / %d", s.Iteration, s.TotalIters)
+		} else {
+			iter = fmt.Sprintf("%d", s.Iteration)
+		}
+	}
+
+	best := "—"
+	bestColor := theme.ColorTextDim
+	if s.BestLossSet {
+		best = fmt.Sprintf("%.4f", s.BestLoss)
+		bestColor = theme.ColorOK
+	}
+
+	advisor := "off"
+	advisorColor := theme.ColorTextDim
+	if s.AdvisorOn {
+		advisor = "◆ " + s.AdvisorModel + "  ON"
+		advisorColor = theme.ColorAdvisor
+	}
+
+	comp := orStr(s.Competition, "(no competition)")
+	compColor := theme.ColorJade
+	if s.Competition == "" {
+		compColor = theme.ColorMuted
+	}
+
+	rows := []components.InfoRow{
+		{Key: "competition", Value: comp, Color: compColor},
+		{Key: "phase", Value: phaseVal, Color: phaseColor},
+		{Key: "iter", Value: iter, Color: theme.ColorTextDim},
+		{Key: "best_loss", Value: best, Color: bestColor},
+		{Key: "advisor", Value: advisor, Color: advisorColor},
+	}
+
+	// Recent activity tail.
+	if recents := components.ReadRecent(2); len(recents) > 0 {
+		var slugs []string
+		for _, r := range recents {
+			slug := r.Slug
+			if len(slug) > 22 {
+				slug = slug[:21] + "…"
+			}
+			slugs = append(slugs, "#"+r.ID+" "+slug)
+		}
+		rows = append(rows, components.InfoRow{
+			Key:   "recent",
+			Value: strings.Join(slugs, "  "),
+			Color: theme.ColorTextDim,
+		})
+	}
+
+	return rows
+}
+
+func orStr(v, def string) string {
+	if strings.TrimSpace(v) == "" {
+		return def
+	}
+	return v
+}
+
+func colorHex(c lipgloss.Color) string { return string(c) }
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

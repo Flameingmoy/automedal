@@ -1,11 +1,14 @@
-// Command automedal-tui is the Go shell for the AutoMedal workflow.  See
-// docs/plans/go-tui-migration.md for the why.  It does three things:
-//   1. Render the Home / Dashboard / Run / Help / Knowledge screens.
+// Command automedal-tui is the v2 Go shell for AutoMedal.  See
+// design/AutoMedal TUI v2.html for the visual reference.  Every screen
+// shares: a top spring-nav strip, a status bar, and a footer hint row.
+//
+// Responsibilities:
+//   1. Render Home / Dashboard / Run / Timeline / Config / Knowledge / Help.
 //   2. Tail agent_loop.events.jsonl with fsnotify.
-//   3. Spawn `automedal <cmd>` as a subprocess for anything that isn't UI.
+//   3. Spawn `automedal <cmd>` as a subprocess for any non-UI command.
 //
 // It never imports Python, never speaks to a provider directly, never
-// touches Kaggle. The Python kernel owns all of that.
+// touches Kaggle.  The Go control plane owns all of that.
 package main
 
 import (
@@ -13,46 +16,81 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Flameingmoy/automedal/internal/ui/components"
 	"github.com/Flameingmoy/automedal/internal/ui/models"
+	"github.com/Flameingmoy/automedal/internal/ui/theme"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
-// Root is the top-level tea.Model. It holds the active child model and
-// forwards WindowSize / Key / custom messages to it, swapping children on
-// SwitchScreenMsg.
+// Root holds the active child model, instantiates lazy ones on first
+// nav, and renders the chrome (nav strip) above whatever the child
+// returned.
 type Root struct {
-	active   models.Screen
-	home     tea.Model
+	active models.Screen
+
+	home     models.HomeModel
 	dash     tea.Model
 	run      tea.Model
-	help     tea.Model
+	help     models.HelpModel
 	knowBase tea.Model
+	timeline tea.Model
+	config   tea.Model
 
 	width, height int
+
+	nav *components.NavBar
 }
 
 func newRoot(initial models.Screen) *Root {
+	nav := components.NewNavBar([]components.NavTab{
+		{ID: "home", Label: "home"},
+		{ID: "dashboard", Label: "dashboard"},
+		{ID: "run", Label: "run"},
+		{ID: "timeline", Label: "timeline"},
+		{ID: "config", Label: "config"},
+		{ID: "help", Label: "help"},
+	})
+	nav.SetActive(navIDFor(initial))
 	return &Root{
 		active:   initial,
 		home:     models.NewHome(),
 		help:     models.NewHelp(),
 		knowBase: models.NewKnowledge(),
+		nav:      nav,
 	}
+}
+
+func navIDFor(s models.Screen) string {
+	switch s {
+	case models.ScreenDash:
+		return "dashboard"
+	case models.ScreenRun:
+		return "run"
+	case models.ScreenHelp:
+		return "help"
+	case models.ScreenKnowledge:
+		return "home"
+	case models.ScreenTimeline:
+		return "timeline"
+	case models.ScreenConfig:
+		return "config"
+	}
+	return "home"
 }
 
 func (r *Root) Init() tea.Cmd {
+	cmds := []tea.Cmd{components.NavTickCmd()}
 	switch r.active {
 	case models.ScreenHome:
-		return r.home.Init()
+		cmds = append(cmds, r.home.Init())
 	case models.ScreenDash:
 		r.dash = models.NewDash()
-		return r.dash.Init()
+		cmds = append(cmds, r.dash.Init())
 	}
-	return r.home.Init()
+	return tea.Batch(cmds...)
 }
 
-// current returns a pointer to the tea.Model field matching the current
-// screen, or nil if we haven't instantiated it yet.
 func (r *Root) current() tea.Model {
 	switch r.active {
 	case models.ScreenHome:
@@ -65,6 +103,10 @@ func (r *Root) current() tea.Model {
 		return r.help
 	case models.ScreenKnowledge:
 		return r.knowBase
+	case models.ScreenTimeline:
+		return r.timeline
+	case models.ScreenConfig:
+		return r.config
 	}
 	return r.home
 }
@@ -72,15 +114,19 @@ func (r *Root) current() tea.Model {
 func (r *Root) setCurrent(m tea.Model) {
 	switch r.active {
 	case models.ScreenHome:
-		r.home = m
+		r.home = m.(models.HomeModel)
 	case models.ScreenDash:
 		r.dash = m
 	case models.ScreenRun:
 		r.run = m
 	case models.ScreenHelp:
-		r.help = m
+		r.help = m.(models.HelpModel)
 	case models.ScreenKnowledge:
 		r.knowBase = m
+	case models.ScreenTimeline:
+		r.timeline = m
+	case models.ScreenConfig:
+		r.config = m
 	}
 }
 
@@ -88,9 +134,15 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		r.width, r.height = msg.Width, msg.Height
-		// Forward to all instantiated children so their sizes stay in sync.
+		r.nav.SetWidth(msg.Width)
+		// Pass child the inner size (header eats 2 rows).
+		inner := tea.WindowSizeMsg{Width: msg.Width, Height: msg.Height - 2}
 		var cmds []tea.Cmd
-		for _, k := range []models.Screen{models.ScreenHome, models.ScreenDash, models.ScreenRun, models.ScreenHelp, models.ScreenKnowledge} {
+		for _, k := range []models.Screen{
+			models.ScreenHome, models.ScreenDash, models.ScreenRun,
+			models.ScreenHelp, models.ScreenKnowledge,
+			models.ScreenTimeline, models.ScreenConfig,
+		} {
 			was := r.active
 			r.active = k
 			m := r.current()
@@ -98,7 +150,7 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				r.active = was
 				continue
 			}
-			nm, cmd := m.Update(msg)
+			nm, cmd := m.Update(inner)
 			r.setCurrent(nm)
 			if cmd != nil {
 				cmds = append(cmds, cmd)
@@ -107,39 +159,67 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return r, tea.Batch(cmds...)
 
+	case components.NavTickMsg:
+		moved := r.nav.Tick()
+		if moved {
+			return r, components.NavTickCmd()
+		}
+		// Spring at rest — keep ticking at low rate to stay responsive
+		// when the user switches tabs again.
+		return r, components.NavTickCmd()
+
 	case models.SwitchScreenMsg:
-		// Tear down old state lazily; instantiate new if needed.
 		r.active = msg.To
+		r.nav.SetActive(navIDFor(msg.To))
 		switch msg.To {
 		case models.ScreenDash:
 			if r.dash == nil {
 				r.dash = models.NewDash()
 			}
 			init := r.dash.Init()
-			// Resend the window-size so the new model lays out correctly.
-			resize := func() tea.Msg { return tea.WindowSizeMsg{Width: r.width, Height: r.height} }
-			return r, tea.Batch(init, resize)
+			resize := func() tea.Msg {
+				return tea.WindowSizeMsg{Width: r.width, Height: r.height - 2}
+			}
+			return r, tea.Batch(init, resize, components.NavTickCmd())
 		case models.ScreenRun:
 			r.run = models.NewRun(msg.Verb, msg.Args)
 			init := r.run.Init()
-			resize := func() tea.Msg { return tea.WindowSizeMsg{Width: r.width, Height: r.height} }
-			return r, tea.Batch(init, resize)
+			resize := func() tea.Msg {
+				return tea.WindowSizeMsg{Width: r.width, Height: r.height - 2}
+			}
+			return r, tea.Batch(init, resize, components.NavTickCmd())
 		case models.ScreenKnowledge:
 			r.knowBase = models.NewKnowledge()
 			init := r.knowBase.Init()
-			resize := func() tea.Msg { return tea.WindowSizeMsg{Width: r.width, Height: r.height} }
-			return r, tea.Batch(init, resize)
+			resize := func() tea.Msg {
+				return tea.WindowSizeMsg{Width: r.width, Height: r.height - 2}
+			}
+			return r, tea.Batch(init, resize, components.NavTickCmd())
 		case models.ScreenHelp:
 			r.help = models.NewHelp()
-			resize := func() tea.Msg { return tea.WindowSizeMsg{Width: r.width, Height: r.height} }
-			return r, resize
+			resize := func() tea.Msg {
+				return tea.WindowSizeMsg{Width: r.width, Height: r.height - 2}
+			}
+			return r, tea.Batch(resize, components.NavTickCmd())
+		case models.ScreenTimeline:
+			r.timeline = models.NewTimeline()
+			init := r.timeline.Init()
+			resize := func() tea.Msg {
+				return tea.WindowSizeMsg{Width: r.width, Height: r.height - 2}
+			}
+			return r, tea.Batch(init, resize, components.NavTickCmd())
+		case models.ScreenConfig:
+			r.config = models.NewConfig()
+			init := r.config.Init()
+			resize := func() tea.Msg {
+				return tea.WindowSizeMsg{Width: r.width, Height: r.height - 2}
+			}
+			return r, tea.Batch(init, resize, components.NavTickCmd())
 		case models.ScreenHome:
-			// Home is always alive; just re-focus.
-			return r, nil
+			return r, components.NavTickCmd()
 		}
 	}
 
-	// Default: forward to current screen.
 	cur := r.current()
 	if cur == nil {
 		return r, nil
@@ -154,22 +234,28 @@ func (r *Root) View() string {
 	if cur == nil {
 		return "loading…"
 	}
-	return cur.View()
+	bg := lipgloss.NewStyle().Background(lipgloss.Color(theme.ColorBg))
+	return bg.Render(r.nav.Render() + "\n" + cur.View())
 }
 
 func main() {
-	screen := flag.String("screen", "home", "initial screen: home|dashboard")
+	screen := flag.String("screen", "home", "initial screen: home|dashboard|timeline|config")
 	version := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
 	if *version {
-		fmt.Println("automedal-tui v0.1.0")
+		fmt.Println("automedal-tui v2.0.0")
 		return
 	}
 
 	initial := models.ScreenHome
-	if *screen == "dashboard" || *screen == "dash" {
+	switch *screen {
+	case "dashboard", "dash":
 		initial = models.ScreenDash
+	case "timeline":
+		initial = models.ScreenTimeline
+	case "config":
+		initial = models.ScreenConfig
 	}
 
 	p := tea.NewProgram(newRoot(initial),

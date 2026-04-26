@@ -25,6 +25,8 @@ const (
 	ScreenRun
 	ScreenHelp
 	ScreenKnowledge
+	ScreenTimeline
+	ScreenConfig
 )
 
 // EventMsg wraps a JSONL event on its way into the dashboard's Update.
