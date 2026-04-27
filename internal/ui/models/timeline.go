@@ -42,8 +42,8 @@ func (m TimelineModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m TimelineModel) View() string {
-	if m.width == 0 {
-		return "\n  timeline loading…\n"
+	if m.width <= 0 {
+		m.width = 80
 	}
 
 	// Recompute on every render so the chart picks up new TSV rows

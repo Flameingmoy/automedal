@@ -171,53 +171,40 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case models.SwitchScreenMsg:
 		r.active = msg.To
 		r.nav.SetActive(navIDFor(msg.To))
+		// Instantiate (or refresh) the target screen, then forward the
+		// current size SYNCHRONOUSLY so the very first View() has
+		// non-zero width — otherwise children fall back to their
+		// "loading…" guard for one frame.
 		switch msg.To {
 		case models.ScreenDash:
 			if r.dash == nil {
 				r.dash = models.NewDash()
 			}
-			init := r.dash.Init()
-			resize := func() tea.Msg {
-				return tea.WindowSizeMsg{Width: r.width, Height: r.height - 2}
-			}
-			return r, tea.Batch(init, resize, components.NavTickCmd())
 		case models.ScreenRun:
 			r.run = models.NewRun(msg.Verb, msg.Args)
-			init := r.run.Init()
-			resize := func() tea.Msg {
-				return tea.WindowSizeMsg{Width: r.width, Height: r.height - 2}
-			}
-			return r, tea.Batch(init, resize, components.NavTickCmd())
 		case models.ScreenKnowledge:
 			r.knowBase = models.NewKnowledge()
-			init := r.knowBase.Init()
-			resize := func() tea.Msg {
-				return tea.WindowSizeMsg{Width: r.width, Height: r.height - 2}
-			}
-			return r, tea.Batch(init, resize, components.NavTickCmd())
 		case models.ScreenHelp:
 			r.help = models.NewHelp()
-			resize := func() tea.Msg {
-				return tea.WindowSizeMsg{Width: r.width, Height: r.height - 2}
-			}
-			return r, tea.Batch(resize, components.NavTickCmd())
 		case models.ScreenTimeline:
 			r.timeline = models.NewTimeline()
-			init := r.timeline.Init()
-			resize := func() tea.Msg {
-				return tea.WindowSizeMsg{Width: r.width, Height: r.height - 2}
-			}
-			return r, tea.Batch(init, resize, components.NavTickCmd())
 		case models.ScreenConfig:
 			r.config = models.NewConfig()
-			init := r.config.Init()
-			resize := func() tea.Msg {
-				return tea.WindowSizeMsg{Width: r.width, Height: r.height - 2}
-			}
-			return r, tea.Batch(init, resize, components.NavTickCmd())
 		case models.ScreenHome:
 			return r, components.NavTickCmd()
 		}
+		cur := r.current()
+		var initCmd tea.Cmd
+		if cur != nil {
+			initCmd = cur.Init()
+			// Sync size into the new screen before the next paint.
+			if r.width > 0 && r.height > 0 {
+				inner := tea.WindowSizeMsg{Width: r.width, Height: r.height - 2}
+				nm, _ := cur.Update(inner)
+				r.setCurrent(nm)
+			}
+		}
+		return r, tea.Batch(initCmd, components.NavTickCmd())
 	}
 
 	cur := r.current()

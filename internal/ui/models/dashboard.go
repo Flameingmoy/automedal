@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -26,6 +27,11 @@ type DashModel struct {
 	evCh   <-chan events.Event
 	cancel context.CancelFunc
 
+	// tail metadata — surfaced in the empty-state.
+	eventsPath   string
+	eventsSource string // "go.mod" | "AUTOMEDAL_CWD" | "artefacts" | "cwd"
+	tailOK       bool
+
 	rows []components.LeaderRow
 	gpu  components.GpuSample
 
@@ -38,32 +44,41 @@ type DashModel struct {
 
 const maxLogRows = 500
 
-// NewDash opens the JSONL tailer and wires periodic pollers.
+// NewDash opens the JSONL tailer and wires periodic pollers.  Tail
+// setup runs here (not Init) so the resolved path + connection bool
+// can live on the value receiver — Init() can't mutate the model.
 func NewDash() DashModel {
 	vp := viewport.New(80, 12)
+
+	root, source := util.RepoRootResolved()
+	path := root + string(os.PathSeparator) + "agent_loop.events.jsonl"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, err := events.Tail(ctx, path, events.TailOpts{})
+	if err != nil {
+		cancel()
+		ch = nil
+	}
+
 	return DashModel{
-		state:    events.NewState(),
-		logVP:    vp,
-		focusIdx: -1,
-		follow:   true,
+		state:        events.NewState(),
+		logVP:        vp,
+		focusIdx:     -1,
+		follow:       true,
+		evCh:         ch,
+		cancel:       cancel,
+		eventsPath:   path,
+		eventsSource: source,
+		tailOK:       err == nil,
 	}
 }
 
 func (m DashModel) Init() tea.Cmd {
-	ctx, cancel := context.WithCancel(context.Background())
-	ch, err := events.Tail(ctx, util.EventsPath(), events.TailOpts{})
-	if err != nil {
-		cancel()
-		return tea.Batch(tickLeaderboard(), tickGPU(), tickSpin())
+	cmds := []tea.Cmd{tickLeaderboard(), tickGPU(), tickSpin()}
+	if m.evCh != nil {
+		cmds = append(cmds, waitForEvent(m.evCh))
 	}
-	m.evCh = ch
-	m.cancel = cancel
-	return tea.Batch(
-		waitForEvent(ch),
-		tickLeaderboard(),
-		tickGPU(),
-		tickSpin(),
-	)
+	return tea.Batch(cmds...)
 }
 
 func waitForEvent(ch <-chan events.Event) tea.Cmd {
@@ -465,8 +480,11 @@ func (a lossAdapter) Series() []float64     { return a.s.LossSeries }
 func (a lossAdapter) Last() (float64, bool) { return a.s.LastLoss, a.s.LastLossSet }
 
 func (m DashModel) View() string {
-	if m.width == 0 {
-		return "\n  dashboard loading…\n"
+	if m.width <= 0 {
+		m.width = 100
+	}
+	if m.height <= 0 {
+		m.height = 30
 	}
 
 	bestLoss := 0.0
@@ -497,28 +515,30 @@ func (m DashModel) View() string {
 		SpinIdx:      m.spin,
 	}, m.width)
 
-	// Stat cards row.
-	cardW := (m.width - 14) / 5
-	if cardW < 14 {
-		cardW = 14
+	// Stat cards row — 4 cards keeps each one ≥ 22 cols on a 100-col
+	// terminal.  Δ Total + Advisor were dropped because both already
+	// surface in the status bar above.
+	cardW := (m.width - 10) / 4
+	if cardW < 18 {
+		cardW = 18
 	}
 	phaseStr := strings.ToUpper(orStr(m.state.Phase, "idle"))
 	phaseColor := string(theme.PhaseColor(m.state.Phase))
+	phaseSub := "● running"
 	if phaseStr == "IDLE" {
 		phaseColor = theme.ColorTextDim
+		phaseSub = "○ waiting"
 	}
 	iterVal := fmt.Sprintf("%d", len(m.rows))
+	iterSub := "tracked"
+	if totalDelta != "" {
+		iterSub = totalDelta
+	}
 	bestStr := "—"
 	bestColor := theme.ColorTextDim
 	if bestLossSet {
 		bestStr = fmt.Sprintf("%.4f", bestLoss)
 		bestColor = theme.ColorOK
-	}
-	deltaStr := "—"
-	deltaColor := theme.ColorTextDim
-	if totalDelta != "" {
-		deltaStr = totalDelta
-		deltaColor = theme.ColorOK
 	}
 	gpuVal := "—"
 	gpuColor := theme.ColorTextDim
@@ -530,25 +550,15 @@ func (m DashModel) View() string {
 			gpuColor = theme.ColorWarn
 		}
 	}
-	advisorVal := "off"
-	advisorColor := theme.ColorTextDim
-	if m.state.AdvisorModel != "" {
-		advisorVal = m.state.AdvisorModel
-		advisorColor = theme.ColorAdvisor
-	}
 
 	cards := lipgloss.JoinHorizontal(lipgloss.Top,
-		components.StatCard("Phase", phaseStr, "● running", phaseColor, cardW),
+		components.StatCard("Phase", phaseStr, phaseSub, phaseColor, cardW),
 		" ",
-		components.StatCard("Experiments", iterVal, "tracked", theme.ColorText, cardW),
+		components.StatCard("Experiments", iterVal, iterSub, theme.ColorText, cardW),
 		" ",
 		components.StatCard("Best Loss", bestStr, bestMethod, bestColor, cardW),
 		" ",
-		components.StatCard("Δ Total", deltaStr, "from baseline", deltaColor, cardW),
-		" ",
 		components.StatCard("GPU Util", gpuVal, gpuName(m.gpu), gpuColor, cardW),
-		" ",
-		components.StatCard("Advisor", advisorVal, advisorSub(m.state), advisorColor, cardW),
 	)
 
 	// Compact loss sparkline.
@@ -566,6 +576,19 @@ func (m DashModel) View() string {
 		Foreground(lipgloss.Color(theme.ColorJade)).
 		Bold(true).
 		Render("LIVE EVENTS")
+
+	// "tail ●" chip — jade dot when fsnotify is connected, dim ring
+	// when we couldn't open the watcher.
+	chipDot := "○"
+	chipColor := theme.ColorTextDim
+	if m.tailOK {
+		chipDot = "●"
+		chipColor = theme.ColorJade
+	}
+	chip := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(chipColor)).
+		Render("  " + chipDot + " tail")
+
 	focusInfo := ""
 	if m.focusIdx >= 0 && m.focusIdx < len(m.logRows) {
 		focusInfo = fmt.Sprintf("  ·  %d/%d", m.focusIdx+1, len(m.logRows))
@@ -575,8 +598,15 @@ func (m DashModel) View() string {
 		Render(fmt.Sprintf("  %s · %d in / %d out%s",
 			strings.ToLower(orStr(m.state.Phase, "idle")),
 			m.state.TotalInTok, m.state.TotalOutTok, focusInfo))
+
+	var logBody string
+	if len(m.logRows) == 0 {
+		logBody = m.emptyEventsState(rightW - 4)
+	} else {
+		logBody = m.logVP.View()
+	}
 	logBox := theme.Panel.Copy().Width(rightW - 2).Render(
-		logTitle + logSub + "\n" + m.logVP.View(),
+		logTitle + chip + logSub + "\n" + logBody,
 	)
 	body := lipgloss.JoinHorizontal(lipgloss.Top, leader, " ", logBox)
 
@@ -621,11 +651,41 @@ func gpuName(g components.GpuSample) string {
 	return g.Name
 }
 
-func advisorSub(s *events.State) string {
-	if s.AdvisorModel == "" {
-		return "no consults"
+// emptyEventsState renders the LIVE EVENTS panel body when nothing has
+// streamed yet — explains where we're looking and what we're waiting
+// for, so a blank panel never looks broken.
+func (m DashModel) emptyEventsState(width int) string {
+	if width < 20 {
+		width = 20
 	}
-	return fmt.Sprintf("%d in / %d out", s.TotalInTok, s.TotalOutTok)
+	mutedDim := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.ColorTextDim))
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.ColorMuted))
+	jade := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.ColorJade))
+
+	icon := "○"
+	statusLine := "waiting for events…"
+	hint := "no agent_loop.events.jsonl yet"
+	if m.tailOK {
+		icon = "●"
+		statusLine = "tail connected — no events emitted yet"
+		hint = "run `automedal run N` to populate this stream"
+	}
+
+	pathDisplay := m.eventsPath
+	if len(pathDisplay) > width-4 {
+		pathDisplay = "…" + pathDisplay[len(pathDisplay)-(width-5):]
+	}
+
+	rows := []string{
+		"",
+		"  " + jade.Render(icon) + " " + mutedDim.Render(statusLine),
+		"",
+		"  " + muted.Render("path   ") + mutedDim.Render(pathDisplay),
+		"  " + muted.Render("source ") + mutedDim.Render(m.eventsSource),
+		"",
+		"  " + muted.Render(hint),
+	}
+	return strings.Join(rows, "\n")
 }
 
 func leftColumn(width int) int {

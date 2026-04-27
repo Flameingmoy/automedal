@@ -73,8 +73,11 @@ func (m *KnowledgeModel) loadContent() {
 }
 
 func (m KnowledgeModel) View() string {
-	if m.width == 0 {
-		return "\n  loading knowledge…\n"
+	if m.width <= 0 {
+		m.width = 80
+	}
+	if m.height <= 0 {
+		m.height = 24
 	}
 	title := theme.Accent.Render("knowledge.md") + "  " +
 		theme.Muted.Render("(q to return)")

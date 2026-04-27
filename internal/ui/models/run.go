@@ -144,8 +144,11 @@ func (m RunModel) logColumn() int {
 }
 
 func (m RunModel) View() string {
-	if m.width == 0 {
-		return "spawning…"
+	if m.width <= 0 {
+		m.width = 80
+	}
+	if m.height <= 0 {
+		m.height = 24
 	}
 
 	// Header strip — phase-coloured, with spinner.

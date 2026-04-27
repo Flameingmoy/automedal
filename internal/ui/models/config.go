@@ -103,8 +103,8 @@ func (m ConfigModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m ConfigModel) View() string {
-	if m.width == 0 {
-		return "\n  config loading…\n"
+	if m.width <= 0 {
+		m.width = 80
 	}
 
 	header := lipgloss.NewStyle().

@@ -37,10 +37,13 @@ const (
 	ColorWarn  = "#e09b2d"
 	ColorError = "#e05252"
 
-	// Banner gradient stops — blue → cyan → jade (crush-inspired).
-	GradStop1 = "#3b82f6"
+	// Banner gradient stops — jade → cyan → neon-blue.  Top of the
+	// AUTOMEDAL wordmark is jade (the brand accent), bottom transitions
+	// through cyan into a saturated neon blue.  Inspired by Charm's
+	// crush splash but rebalanced for AutoMedal's jade-forward identity.
+	GradStop1 = "#00cfa8"
 	GradStop2 = "#22d3ee"
-	GradStop3 = "#00cfa8"
+	GradStop3 = "#1d6bff"
 
 	// Legacy aliases kept so older code compiles during migration.
 	ColorFg     = ColorText
@@ -126,8 +129,14 @@ func PhaseStyle(phase string) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(PhaseColor(phase))
 }
 
+// GradientRows is an alias of GradientColors meant for callers that
+// step the gradient down rows of multi-line ASCII art (banner, splash).
+// Same colour math, distinct name so future per-column callers don't
+// confuse the two intents.
+func GradientRows(n int) []lipgloss.Color { return GradientColors(n) }
+
 // GradientColors returns `n` interpolated colours stepping
-// blue → cyan → jade through HSL space.  Used by the banner.
+// jade → cyan → neon-blue through HSL space.  Used by the banner.
 func GradientColors(n int) []lipgloss.Color {
 	if n <= 0 {
 		return nil
