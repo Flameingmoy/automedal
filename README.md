@@ -29,18 +29,22 @@ Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch) 
 
 ## Install
 
+Two binaries get installed: **`automedal`** (the headless CLI / control plane) and **`automedal-tui`** (the v2 Bubbletea UI — Hermes-style banner, spring nav, drill-down event stream). They run independently — the TUI tails the same `agent_loop.events.jsonl` the CLI writes.
+
 ### One-liner (recommended)
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/Flameingmoy/automedal/main/install.sh | bash
 ```
 
-The installer verifies Go ≥ 1.24, builds the `automedal` binary into `~/.local/bin`, installs the optional `sniff` Python shim (via `pipx`, falling back to `pip --user`), and creates `~/.automedal/` (mode 0700) for credentials and logs.
+The installer verifies Go ≥ 1.24, builds **both binaries** into `~/.local/bin`, installs the optional `sniff` Python shim (via `pipx`, falling back to `pip --user`), and creates `~/.automedal/` (mode 0700) for credentials and logs.
 
-Upgrade later:
+Upgrade later (from a checkout — the TUI lives in `./internal/ui`, which `go install` can't target):
 
 ```bash
-GOBIN=~/.local/bin go install github.com/Flameingmoy/automedal/cmd/automedal@latest
+git pull
+go install ./cmd/automedal                          # → $GOBIN/automedal
+go build  -o ~/.local/bin/automedal-tui ./internal/ui
 pipx upgrade automedal-sniff
 ```
 
@@ -48,10 +52,14 @@ pipx upgrade automedal-sniff
 
 ```bash
 git clone https://github.com/Flameingmoy/automedal automedal && cd automedal
-go build -o ~/.local/bin/automedal ./cmd/automedal
-pipx install ./py-shim/sniff       # or: pip install --user ./py-shim/sniff
-automedal version
+go build -o ~/.local/bin/automedal     ./cmd/automedal
+go build -o ~/.local/bin/automedal-tui ./internal/ui
+pipx install ./py-shim/sniff                        # or: pip install --user ./py-shim/sniff
+automedal version          # → automedal 2.0.0-go
+automedal-tui --version    # → automedal-tui v2.0.0
 ```
+
+> **Heads up:** typing `automedal` with no arguments now prints a usage error rather than launching the UI — the TUI is its own binary. Run **`automedal-tui`** to see the live dashboard, or `automedal-tui --screen dashboard` to land directly on the live-events screen.
 
 ### Requirements
 
@@ -83,7 +91,7 @@ automedal run 50                          # 4. run 50 iterations of the loop
 
 That's it. Each iteration runs the four phases (Researcher → Strategist → Experimenter-edit → train → Experimenter-eval → Analyzer), verifies invariants, tags `exp/NNNN`, and — whenever `val_loss` improves — writes a Kaggle-ready CSV to `submissions/`.
 
-Running `automedal` with no arguments opens the [TUI command centre](#tui--command-centre) instead.
+Open the [TUI command centre](#tui--command-centre) at any time with **`automedal-tui`** to watch a run live.
 
 ## How It Works
 
@@ -159,89 +167,68 @@ Every consult emits an `advisor_consult` JSONL event (`purpose`, `model`, `in_to
 
 ## TUI — Command Centre
 
-`automedal` with no arguments execs the Go shell (`tui-go/`) — a single
-static binary built on Charmbracelet's Bubbletea stack. Native ANSI,
-~10 ms first-frame latency, ~16 MB idle RSS. It tails the same
-`agent_loop.events.jsonl` the kernel writes, with no Python re-imports
-on every command.
+The v2 TUI is its own static binary at `./internal/ui` (built as `automedal-tui`). True-black surface, jade primary, per-phase palette (researcher / strategist / experimenter / analyzer / advisor), spring-physics nav underline, Hermes-style chunky pixel banner with a blue → cyan → jade gradient. Tails `agent_loop.events.jsonl` directly, no subprocess hops, no Python re-imports.
 
-### Build
+### Run it
 
 ```bash
-cd tui-go
-go build -o automedal-tui .          # ~11 MB static binary
-cp automedal-tui ~/.local/bin/       # or any dir on $PATH
+automedal-tui                          # opens the Home screen
+automedal-tui --screen dashboard       # land on the live dashboard
+automedal-tui --screen timeline        # land on the progression chart
+automedal-tui --screen config          # land on the env-var status table
+automedal-tui --version                # → automedal-tui v2.0.0
 ```
 
-After that, `automedal` just works. Override location with
-`AUTOMEDAL_TUI_GO_BIN=/abs/path/automedal-tui`. If the binary is missing,
-the CLI prints the build command and exits non-zero — use
-`automedal dispatch <cmd>` for headless runs.
+If the binary isn't on `$PATH`, build it from the repo root with `go build -o ~/.local/bin/automedal-tui ./internal/ui`. The TUI reads the working-directory's `agent/results.tsv` + `agent_loop.events.jsonl`, so launch it from inside a competition project to see live data; outside one it shows empty panels but still navigates.
 
 ### Screens
 
+Every screen carries the same chrome: top spring-nav strip + status bar + footer hint row. Switch screens with the single-letter key in the footer (or click the tab if your terminal supports mouse).
+
 | Screen | What's on it |
 |--------|--------------|
-| **Home** | Unicode block-char logo, status pills (phase / iter / advisor), recent journal entries, command palette with Tab autocomplete (incl. `--advisor <TAB>` against the live model cache) |
-| **Dashboard** | Braille sparkline of running-best loss, `results.tsv` leaderboard, live JSONL stream, GPU panel (via `nvidia-smi`) |
-| **Run** | Subprocess streamer for `automedal run N` — `q` sends SIGTERM and returns home cleanly |
-| **Knowledge** | `knowledge.md` rendered via Glamour (scrollable viewport) |
-| **Help** | Keybindings reference |
+| **Home** | Chunky pixel-art `AUTOMEDAL` banner with a blue→cyan→jade column gradient, neofetch-style info table on the right (competition · phase · iter · best_loss · advisor · recent), phase-colour swatches, jade-bordered command palette with Tab autocomplete (incl. `--advisor <Tab>` against the live model cache) |
+| **Dashboard** | Stat-card row (phase · experiments · best loss · Δ total · GPU · advisor) → compact running-best sparkline → leaderboard ⏐ live-events split → GPU bar. **Drill-down:** `[` / `]` move focus between events, `space` / `enter` toggles the focused event's expanded body (tool args pretty-printed, advisor consults show purpose + model + tokens, phase transitions show stop reason), `G` jumps to newest + re-enables follow-mode. Stream auto-pins to the newest event until you scroll or focus an older one |
+| **Run** | Phase-coloured streaming subprocess log on the left + 30-col side metrics panel (phase / experiments / GPU bar / line count); `q` / `Esc` sends SIGTERM and returns Home |
+| **Timeline** | Full-page running-best progression sparkline, four summary cards (baseline · current best · total Δ · success rate), ranked experiment table marking best ★ |
+| **Config** | `~/.automedal/.env` + environment status table — set & overridden first (jade dot), defaults next (dim dot), unset last (red ✗). API keys masked to `sk-●●●●●●●●●●●●` |
+| **Knowledge** | `knowledge.md` rendered via Glamour, scrollable viewport |
+| **Help** | Four-section keymap grid grouped by screen |
 
-### Commands
+### Commands & keybinds
 
-Same palette as the dispatch list: `run [N] [--advisor [model]]`, `init <slug>`,
-`discover`, `select`, `doctor`, `status`, `clean`, `setup`, `models`, plus
-quit aliases (`q`, `quit`, `exit`, `:q`, `:quit`, `:wq`) — these never
-spawn a subprocess. Anything else is forwarded to `automedal <cmd>` as a
-child process, streamed line-by-line.
+The home command palette accepts: `run [N] [--advisor [model]]`, `init <slug>`, `discover`, `select`, `doctor`, `status`, `clean`, `setup`, `models`, plus `dashboard` / `dash` / `watch`, `timeline` / `tl`, `config` / `cfg`, `knowledge` / `k`, `help`. Quit aliases (`q`, `quit`, `exit`, `:q`, `:quit`, `:wq`) call `tea.Quit` directly — they never spawn a subprocess. Anything else is forwarded to `automedal <cmd>` as a streamed child process.
 
-## Roadmap — full-Go shell
-
-The kernel (agent loop, advisor, Kaggle SDK) stays Python. The shell is
-already Go. We're tracking Charmbracelet's
-[crush](https://github.com/charmbracelet/crush) as the reference for how
-far that split can go — their `internal/ui/{chat,dialog,common}/` layout
-is the next target for us. Concretely:
-
-- **Per-tool renderers.** Crush has one Go file per tool type
-  (`ui/chat/{bash,fetch,file,mcp,search,todos,tools,unified_diff}.go`);
-  we currently format every tool identically. Adopting their split
-  unlocks per-tool visual affordances without ballooning a single
-  switch-statement.
-- **Status-icon framing.** `●` header with `✓` / `✗` / `⏳` state,
-  collapsible result block (default 10 lines, expand on demand),
-  syntax-highlighted diff / code output.
-- **Dialog layer.** Crush has modals for models, commands, permissions,
-  quit, sessions — we have `help` and that's it. A permissions modal
-  would let us gate `submit_to_kaggle` behind an approval prompt.
-- **Session persistence.** Crush persists sessions under
-  `$XDG_DATA_HOME/crush/`; we rely on the journal + `results.tsv` in
-  the working directory. A session sidebar + history viewer is within
-  reach once we adopt their schema.
-- **Gradient styling.** `internal/ui/styles/grad.go` is their signature
-  look — one file, cross-cutting. Small lift, big polish.
-
-Not on the roadmap: the MCP transport layer, LSP integration, or
-Catwalk-style external model catalogs — those solve problems we don't
-have.
+| Key | Where | Action |
+|-----|-------|--------|
+| `tab` | Home palette | Autocomplete command (or model after `--advisor`) |
+| `enter` | Home palette | Run the typed command (or open screen) |
+| `[` / `]` | Dashboard | Move focus prev / next event |
+| `space` | Dashboard | Toggle the focused event's expanded body |
+| `G` / `end` | Dashboard | Jump to newest event + re-enable follow |
+| `↑↓` / PgUp / PgDn | Dashboard / Run | Scroll the viewport |
+| `q` / `esc` | Any non-Home screen | Return Home |
+| `ctrl+c` | Anywhere | Quit |
 
 ## CLI Reference
 
 | Command | Description |
 |---------|-------------|
-| `automedal` / `automedal tui` | Open TUI home screen |
+| `automedal-tui` | Open the TUI (Home screen by default; `--screen dashboard\|timeline\|config` to land elsewhere) |
 | `automedal setup` | Configure a provider + API key (first-run) |
 | `automedal doctor` | Smoke-test the provider + SDK versions + env state |
 | `automedal discover` | List and rank active Kaggle competitions |
-| `automedal select` | Pick a competition from a DataTable |
-| `automedal init <slug>` | Download data, infer schema, wire up the project |
+| `automedal select` | Pick a competition from the ranked list |
+| `automedal init <slug>` | Download data, infer schema (via the `sniff` shim), wire up the project |
 | `automedal prepare` | Regenerate `.npy` arrays from `data/` |
-| `automedal render` | Re-render `AGENTS.md` from the template |
-| `automedal run [N]` | Start the loop (default 50 iterations) |
+| `automedal run [N] [--advisor [model]]` | Start the loop (default 50 iterations) |
 | `automedal status` | Quick health: knowledge head, last 5 results, latest tags |
+| `automedal models [refresh]` | List or refresh the cached advisor model catalogue |
 | `automedal clean` | Wipe memory files + `results.tsv` (confirms first) |
 | `automedal version` | Print installed version |
+| `automedal help` | Print the command list |
+
+`automedal` with no arguments is **not** the TUI anymore — it prints `automedal: no command — try \`automedal help\`` and exits 1. Use the dedicated `automedal-tui` binary instead.
 
 ## Providers
 
@@ -289,50 +276,56 @@ STAGNATION_K=5 RESEARCH_EVERY=0 AUTOMEDAL_QUICK_REJECT=1 automedal run 100
 
 ## Project Structure
 
+Single Go module. Python only inside `py-shim/sniff/` (one-shot CSV schema inference, called by `automedal init`) and inside the user's `agent/` directory (the agent's editable ML pipeline).
+
 ```
-automedal/                        Installed package
-├── cli.py                        `automedal` console script entry point
-├── dispatch.py                   One function per subcommand
-├── paths.py                      Layout class — dev vs user mode resolution
-├── auth.py                       ~/.automedal/.env store
-├── run_loop.py                   4-phase orchestrator
-├── dedupe.py                     BM25 motivation dedupe
-├── quick_reject.py               30s smoke-train guard
-└── agent/                        Bespoke agent kernel
-    ├── kernel.py                 Async tool-call loop (~250 LOC)
-    ├── events.py                 JSONL event emitter + human-log mirror
-    ├── providers/
-    │   ├── anthropic.py          anthropic SDK (Anthropic + opencode-go)
-    │   └── openai.py             openai SDK (OpenAI + Ollama + OpenRouter + Groq)
-    ├── tools/
-    │   ├── fs.py                 read/write/edit/list/grep (path-guarded)
-    │   ├── shell.py              run_shell (cwd-bound, timeout)
-    │   ├── cognition.py          BM25 recall tool
-    │   ├── arxiv.py              Researcher-only paper search
-    │   └── subagent.py           spawn_subagent(prompt, tools, max_steps)
-    ├── phases/                   researcher / strategist / experimenter_* / analyzer
-    └── prompts/*.md.j2           jinja-templated phase prompts
+cmd/
+└── automedal/                    `automedal` CLI entry — routes to dispatch
+                                  plus local `harness` / `debug` dev verbs
 
-harness/                          Deterministic automation (no LLM)
-├── check_stagnation.py           K-run stagnation detector
-├── next_exp_id.py                Experiment ID allocator
-├── init_memory.py                Creates memory files on bootstrap
-├── verify_iteration.py           Post-phase invariant + regression + success_criteria
-├── build_trace_trailer.py        Reflective-trace builder
-└── rank_journals.py              Learning-value ranker
+internal/
+├── dispatch/                     One function per subcommand (setup, doctor,
+│                                 discover, init, run, status, models, …)
+├── runloop/                      4-phase orchestrator + dedupe + quickreject + args
+├── agent/                        Bespoke agent kernel
+│   ├── kernel.go                 Goroutine-based tool-call loop
+│   ├── events.go                 JSONL EventSink (TUI tails this)
+│   ├── retry.go · errors.go · messages.go · doomloop.go
+│   ├── providers/
+│   │   ├── anthropic.go          anthropic-sdk-go (Anthropic + opencode-go)
+│   │   └── openai.go             openai-go (OpenAI + Ollama + OpenRouter + Groq)
+│   ├── tools/
+│   │   ├── fs.go                 read/write/edit/list/grep (path-guarded)
+│   │   ├── shell.go              run_shell (cwd-bound, timeout, SIGTERM-safe)
+│   │   ├── cognition.go          Pure-Go BM25Okapi recall
+│   │   ├── arxiv.go              Researcher-only paper search
+│   │   ├── subagent.go           spawn_subagent — concurrent via goroutines
+│   │   ├── advisor.go            consult_advisor wrapper
+│   │   └── plan.go               plan tool
+│   ├── phases/                   researcher · strategist · experimenter_* · analyzer
+│   └── prompts/*.tmpl            text/template phase prompts (was Jinja2)
+├── advisor/                      Kimi-K2.6 second-opinion client + budget + orchestrator
+├── harness/                      Deterministic automation (no LLM)
+│   ├── stagnation.go · expid.go · memory.go
+│   ├── verify.go                 Post-phase invariants + regression + success_criteria
+│   ├── trailer.go · rank.go
+├── scout/                        Competition discovery + bootstrap
+│   ├── discover.go · select.go · scoring.go · bootstrap.go · render.go
+│   └── sniffshim.go              Tiny Go wrapper over `python -m sniff`
+├── auth/env.go                   ~/.automedal/.env store (godotenv)
+├── paths/layout.go               Layout — dev vs user mode resolution
+├── config/config.go              Central env-var schema
+└── ui/                           v2 Bubbletea TUI (= `automedal-tui` binary)
+    ├── main.go                   tea.Program root + spring nav router
+    ├── theme/                    Jade palette + per-phase colours + gradient helper
+    ├── models/                   home · dashboard · run · timeline · config · help · knowledge
+    ├── components/               banner (Hermes pixel font), statusbar, navbar (harmonica),
+    │                             phasechip, statcard, eventitem, footer, leaderboard, gpu, …
+    ├── events/                   fsnotify-based JSONL tailer + Reduce
+    └── proc/                     exec.CommandContext subprocess streamer
 
-scout/                            Competition discovery + bootstrap
-├── discover.py / select.py / bootstrap.py / sniff.py / scoring.py / render.py
-
-tui-go/                           Go TUI (Charmbracelet stack) — user-facing shell
-├── main.go                       tea.Program + screen router
-├── theme/                        Lipgloss palette (Dracula)
-├── models/                       home · dashboard · run · help · knowledge screens
-├── components/                   logo, statusbar, palette, sparkline, leaderboard, gpu
-├── events/                       fsnotify-based JSONL tailer + Format/Reduce
-└── proc/                         exec.CommandContext subprocess streamer
-
-tests/                            pytest suite (Python) — Go tests live in tui-go/**/_test.go
+py-shim/sniff/                    Pandas-backed CSV schema inference (only Python in the repo)
+└── __main__.py · sniff.py        Called once per `automedal init` via `python -m sniff <csv>`
 ```
 
 ### User's project directory
@@ -422,8 +415,11 @@ Wipes `data/` of the old competition's files, pulls the new data, resets memory,
 | Strategist queues 5 entries on the same axis | `verify_iteration.py` will warn; fix `experiment_queue.md` by hand or delete it |
 | `final_val_loss=` line missing from train.py output | Revert `.automedal/agent/train.py`; the next Experimenter will re-add it |
 | Regression gate is reverting good experiments | Set `AUTOMEDAL_REGRESSION_GATE=warn` (default) or check if `best_before` is being read correctly |
-| TUI shows stale events | Tail `agent_loop.events.jsonl` to confirm the loop is writing events; delete + restart if rotated |
-| `automedal-tui (Go binary) not found` | Build it: `cd tui-go && go build -o automedal-tui .`; then copy onto `$PATH` or set `AUTOMEDAL_TUI_GO_BIN` |
+| `automedal` (no args) errors out instead of opening the UI | The TUI is a separate binary now — run **`automedal-tui`** |
+| TUI shows empty panels | The TUI reads `agent/results.tsv` + `agent_loop.events.jsonl` from the cwd. Launch it from inside a competition project (`cd ~/my-comp && automedal-tui`) |
+| TUI shows stale events | `tail -f agent_loop.events.jsonl` to confirm the loop is writing; restart `automedal-tui` if the file was rotated |
+| `automedal-tui: command not found` | Build it: `go build -o ~/.local/bin/automedal-tui ./internal/ui` (from a checkout) — the one-liner installer also drops it in `~/.local/bin` |
+| TUI banner renders as `â` mojibake | Your terminal isn't using a Unicode/Nerd font; switch to one (e.g. JetBrains Mono, Iosevka, Berkeley Mono) and ensure `LANG=*.UTF-8` |
 | `pipx install` fails on git install | Upgrade pipx: `python3 -m pip install --user --upgrade pipx` |
 
 ## Acknowledgements
@@ -432,4 +428,4 @@ Based on [autoresearch](https://github.com/karpathy/autoresearch) by Andrej Karp
 
 ## License
 
-MIT. See [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md) for attribution of bundled third-party software (`anthropic`, `openai`, `rank-bm25`, `jinja2`, `arxiv`, `python-dotenv`, plus the Charmbracelet Go stack — `bubbletea`, `bubbles`, `lipgloss`, `glamour`, `fsnotify` — in `tui-go/`).
+MIT. See [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md) for attribution of bundled third-party software — Anthropic + OpenAI Go SDKs, the Charmbracelet stack (`bubbletea`, `bubbles`, `lipgloss`, `glamour`, `harmonica`), `fsnotify`, `go-colorful`, `godotenv`, `yaml.v3`, plus `pandas` + `numpy` inside the `py-shim/sniff` shim.

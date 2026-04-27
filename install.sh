@@ -31,7 +31,9 @@ command -v go >/dev/null 2>&1 || die "go not found on PATH (need Go ≥ 1.24)."
 GOVER=$(go version | awk '{print $3}' | sed 's/^go//')
 say "Found go ${GOVER}"
 
-# ── 2. Build the binary ───────────────────────────────────────────────────
+# ── 2. Build the binaries ─────────────────────────────────────────────────
+# Two binaries ship: `automedal` (CLI / control plane) and `automedal-tui`
+# (the v2 Bubbletea UI — Hermes banner, spring nav, drill-down events).
 INSTALL_DIR="${AUTOMEDAL_INSTALL_DIR:-${HOME}/.local/bin}"
 mkdir -p "${INSTALL_DIR}"
 
@@ -39,13 +41,21 @@ mkdir -p "${INSTALL_DIR}"
 # `go install`. When run from a checkout, prefer the local tree so the
 # user gets exactly what they see.
 if [[ -f go.mod && -f cmd/automedal/main.go ]]; then
-    say "Building automedal from local checkout → ${INSTALL_DIR}/automedal"
+    say "Building automedal + automedal-tui from local checkout → ${INSTALL_DIR}/"
     GOBIN="${INSTALL_DIR}" go install ./cmd/automedal
+    go build -o "${INSTALL_DIR}/automedal-tui" ./internal/ui
 else
-    say "Installing automedal from ${REPO}@${REF}"
-    GOBIN="${INSTALL_DIR}" go install "${REPO}/cmd/automedal@${REF}"
+    TMP="$(mktemp -d)"
+    say "Cloning ${REPO}@${REF} → ${TMP}"
+    git clone --depth 1 --branch "${REF}" "https://${REPO}.git" "${TMP}" >/dev/null
+    say "Building automedal + automedal-tui → ${INSTALL_DIR}/"
+    (cd "${TMP}" && \
+        GOBIN="${INSTALL_DIR}" go install ./cmd/automedal && \
+        go build -o "${INSTALL_DIR}/automedal-tui" ./internal/ui)
+    rm -rf "${TMP}"
 fi
 say "Built ${INSTALL_DIR}/automedal"
+say "Built ${INSTALL_DIR}/automedal-tui"
 
 # ── 3. Python shim (optional but recommended) ──────────────────────────────
 mkdir -p "${HOME}/.automedal"
@@ -104,9 +114,11 @@ Next steps:
   automedal discover                    # browse active Kaggle competitions
   automedal init <slug>                 # wire up a competition (uses sniff shim)
   automedal run 50                      # start the loop
+  automedal-tui                         # open the live TUI (Hermes home + spring nav)
 
 Upgrade later:
   GOBIN=${INSTALL_DIR} go install ${REPO}/cmd/automedal@${REF}
+  # plus rebuild the TUI from a checkout: go build -o ${INSTALL_DIR}/automedal-tui ./internal/ui
   pipx upgrade automedal-sniff
 
 Docs: https://${REPO}
